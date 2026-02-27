@@ -1,0 +1,13 @@
+-open terminal
+
+python -m venv venv
+venv\Scripts\activate
+
+pip install --upgrade pip
+
+pip install -r requirements.txt
+
+git clone https://github.com/uci-soe/FairytaleQAData.git fairytale_qa_data
+
+-run main.py
+-IGNORE THE MESS MUNA PLSPLSPLSPLSPLSPLS IMMA CLEAN IT DONT WORRY

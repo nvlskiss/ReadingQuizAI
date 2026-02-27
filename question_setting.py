@@ -15,26 +15,26 @@ class QuestionSetting(QWidget):
         question.setStyleSheet("QGroupBox#theBox {border:0;}")
         question.setStyleSheet("border:0;")
 
-        multiple_choice = QCheckBox("Multiple Choice")
-        true_or_false = QCheckBox("True or False")
-        identification = QCheckBox("Identification")
-        essay = QCheckBox("Essay")
+        self.multiple_choice = QCheckBox("Multiple Choice")
+        self.true_or_false = QCheckBox("True or False")
+        self.identification = QCheckBox("Identification")
+        self.essay = QCheckBox("Essay")
 
-        multiple_choice.toggled.connect(self.multiple_box_toggled)
-        multiple_choice.setStyleSheet("font-size:14px;")
+        self.multiple_choice.toggled.connect(self.multiple_box_toggled)
+        self.multiple_choice.setStyleSheet("font-size:14px;")
 
-
-        
-        true_or_false.toggled.connect(self.trueorfalse_box_toggled)
-        true_or_false.setStyleSheet("font-size:14px;")
 
         
-        identification.toggled.connect(self.identification_box_toggled)
-        identification.setStyleSheet("font-size:14px;")
+        self.true_or_false.toggled.connect(self.trueorfalse_box_toggled)
+        self.true_or_false.setStyleSheet("font-size:14px;")
 
         
-        essay.toggled.connect(self.essay_box_toggled)
-        essay.setStyleSheet("font-size:14px;")
+        self.identification.toggled.connect(self.identification_box_toggled)
+        self.identification.setStyleSheet("font-size:14px;")
+
+        
+        self.essay.toggled.connect(self.essay_box_toggled)
+        self.essay.setStyleSheet("font-size:14px;")
 
         #Spinboxes
         self.___spinbox_group()
@@ -48,7 +48,7 @@ class QuestionSetting(QWidget):
         # add Question Widget
         question_vlayout = QVBoxLayout()
         question_layout = QHBoxLayout()
-        self.__question_checkbox_layout(multiple_choice, true_or_false, identification, essay, question_vlayout)
+        self.__question_checkbox_layout(self.multiple_choice, self.true_or_false, self.identification, self.essay, question_vlayout)
         question_layout.addLayout(question_vlayout)
         question.setLayout(question_layout)
 

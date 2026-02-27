@@ -1,0 +1,14 @@
+# GUI Framework
+PySide6==6.7.0
+
+# Machine Learning & NLP
+transformers==4.36.2
+torch==2.1.2
+
+# Supporting libraries
+protobuf==4.25.1
+tiktoken==0.5.2
+huggingface-hub==0.20.3
+
+# File handling
+python-dotenv==1.0.0

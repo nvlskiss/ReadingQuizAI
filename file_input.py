@@ -20,10 +20,10 @@ class InputArea(QWidget):
 
 
         widget_text_input = QWidget()
-        input_message = QTextEdit()
+        self.input_message = QTextEdit()  # Changed: Make it an instance attribute
 
         text_input_layout = QVBoxLayout()
-        text_input_layout.addWidget(input_message)
+        text_input_layout.addWidget(self.input_message)  # Changed: Use self.input_message
         widget_text_input.setLayout(text_input_layout)
 
 
