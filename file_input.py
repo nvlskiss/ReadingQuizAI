@@ -37,7 +37,8 @@ class InputArea(QWidget):
 
         widget_file.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         widget_text_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
+        widget_file.setMinimumSize(600,600)
+        widget_text_input.setMinimumSize(600,600)
 
         self.setLayout(layout)
 

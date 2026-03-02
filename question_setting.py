@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget,  QCheckBox, QHBoxLayout, QVBoxLayout, QGroupBox, QRadioButton, QSpinBox, QPushButton,QButtonGroup, QSizePolicy, QLabel
+from PySide6.QtWidgets import QWidget,  QCheckBox, QHBoxLayout, QVBoxLayout, QGroupBox, QRadioButton, QSpinBox, QPushButton,QButtonGroup, QSizePolicy, QLabel, QPushButton
 from PySide6.QtCore import QObject, Signal, Slot, Qt
 
 
@@ -9,6 +9,8 @@ class QuestionSetting(QWidget):
        
         self.setWindowTitle("Question Setting")
         
+        question_button = QuestionButton()
+
 
         #Checkboxes
         question = QGroupBox()
@@ -86,7 +88,9 @@ class QuestionSetting(QWidget):
 
 
 
+
         v_layout.addLayout(h_layout)
+        v_layout.addWidget(question_button)
 
         self.setLayout(v_layout)
         
@@ -156,4 +160,47 @@ class SpinBox(QSpinBox):
         self.setValue(1)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
+class QuestionButton(QWidget):
+    def __init__(self):
+        super().__init__()
+       
+        # Buttons for Question Input
+        self.save_as_button = QPushButton()
+        self.save_as_button.setText("Save as Notebook")
+        self.save_as_button.setStyleSheet("padding: 8px; font-size: 14px;")
 
+        self.generate_question_button = QPushButton()
+        self.generate_question_button.setText("Generate Question")
+        self.generate_question_button.setStyleSheet("padding: 8px; font-size: 14px;")
+
+        #Button layout
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.save_as_button)
+        button_layout.addWidget(self.generate_question_button)
+
+        self.setLayout(button_layout)
+
+class SideBarNotebook(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.setMinimumWidth(300)
+        notebook_label = QLabel()
+        notebook_label.setText("Notebook")
+        notebook_label.setAlignment(Qt.AlignCenter)
+
+        notebook_label.setStyleSheet("font-size: 16px; text-align: center;")
+
+
+        #Buttons
+        notebook = QPushButton()
+        notebook.setText("Notebook 1")
+        notebook.setStyleSheet("padding: 8px;")
+
+        sidebar_layout = QVBoxLayout()
+        sidebar_layout.setAlignment(Qt.AlignTop)
+        sidebar_layout.addWidget(notebook_label)
+        sidebar_layout.addWidget(notebook)
+
+
+        self.setLayout(sidebar_layout)    
