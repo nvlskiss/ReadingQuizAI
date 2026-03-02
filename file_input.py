@@ -10,20 +10,20 @@ class InputArea(QWidget):
 
         widget_file = QWidget()
         label_file = QLabel("Input (PDF, DOC, or DOCX) file :")
-        input_file = QFileDialog()
+        self.input_file = QFileDialog()
 
 
         form_layout = QVBoxLayout()
         form_layout.addWidget(label_file)
-        form_layout.addWidget(input_file)
+        form_layout.addWidget(self.input_file)
         widget_file.setLayout(form_layout)
 
 
         widget_text_input = QWidget()
-        input_message = QTextEdit()
+        self.input_message = QTextEdit()
 
         text_input_layout = QVBoxLayout()
-        text_input_layout.addWidget(input_message)
+        text_input_layout.addWidget(self.input_message)
         widget_text_input.setLayout(text_input_layout)
 
 
