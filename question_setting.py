@@ -220,30 +220,8 @@ class QuestionSettingDB:
         self.cursor = self.create_connection()
         self.cursor.execute("""DROP TABLE IF EXISTS question_setting""")
 
-        self.cursor.execute("""
-            CREATE TABLE question_setting (
-                File_input TEXT NULL,
-                Input_text TEXT NOT NULL,
-                multiple_choice_bool INTEGER NOT NULL CHECK (multiple_choice_bool IN (0, 1)),
-                true_or_false_bool INTEGER NOT NULL CHECK (true_or_false_bool IN (0, 1)),
-                identification_bool INTEGER NOT NULL CHECK (identification_bool IN (0, 1)),
-                essay_bool INTEGER NOT NULL CHECK (essay_bool IN (0, 1)),
-                multiple_choice_qty INTEGER NOT NULL,
-                true_or_false_qty INTEGER NOT NULL,
-                identification_qty INTEGER NOT NULL,
-                essay_qty INTEGER NOT NULL,
-                language TEXT NOT NULL CHECK (language IN ('English', 'Filipino'))
-            )
-        """)
+        self.cursor.execute()
 
-        self.list_question_setting = (File_input, Input_text, multiple_choice_bool, true_or_false_bool, identification_bool, essay_bool, multiple_choice_qty, true_or_false_qty, identification_qty, essay_qty, language)
-
-        print(self.list_question_setting)
-            
-        self.cursor.execute(
-                "INSERT INTO question_setting (File_input, Input_text, multiple_choice_bool, true_or_false_bool, identification_bool, essay_bool, multiple_choice_qty, true_or_false_qty, identification_qty, essay_qty, language) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-                self.list_question_setting
-            )
         print("Insert data succesfully")
         self.connection.commit()
         self.connection.close()
