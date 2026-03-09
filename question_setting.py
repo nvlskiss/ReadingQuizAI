@@ -11,6 +11,7 @@ class QuestionSetting(QWidget):
         self.setWindowTitle("Question Setting")
         
         self.question_button = QuestionButton()
+        
 
 
         #Checkboxes
@@ -206,6 +207,10 @@ class SideBarNotebook(QWidget):
 
         self.setLayout(sidebar_layout)    
 
+
+
+
+
 class QuestionSettingDB:
     def __init__(self):
       pass
@@ -220,7 +225,6 @@ class QuestionSettingDB:
         self.cursor = self.create_connection()
         self.cursor.execute("""DROP TABLE IF EXISTS question_setting""")
 
-        self.cursor.execute()
 
         print("Insert data succesfully")
         self.connection.commit()

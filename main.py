@@ -35,9 +35,10 @@ if __name__ == "__main__":
 
     # Database for question setting
     question_setting_database = QuestionSettingDB()
-    # Get generate question button
-    question_setting.question_button.generate_question_button.clicked.connect(question_setting_database.insert_data(File_input="adsfasdfsad",Input_text= "alsdkjflaksdjfklasjdflkajsdf", multiple_choice_bool= 1, true_or_false_bool=1, identification_bool=1, essay_bool=0, multiple_choice_qty=2, true_or_false_qty=3, identification_qty=2, essay_qty=0, language='English'))
 
+
+    # Get generate question button
+    #question_setting.question_button.generate_question_button.clicked.connect()
 
     # Question input layout
     question_input_layout = QVBoxLayout()
