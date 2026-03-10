@@ -1,25 +1,11 @@
-from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout
+from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout, QPlainTextEdit
 import sys
 import sqlite3
 
 from question_setting import QuestionSetting
-from file_input import InputArea
 from ai_output import OutputArea
 from question_setting import SideBarNotebook
 from question_setting import QuestionSettingDB
-
-# class MainWindow(QMainWindow):
-#     def __init__(self, app):
-#         super().__init__()
-#         self.app = app
-#         question_setting = QuestionSetting()
-#         input_area = InputArea()
-       
-#         widget = QWidget()
-#         v_layout = QVBoxLayout()
-#         v_layout.addWidget(question_setting)
-#         v_layout.addWidget(input_area)
-#         widget.setLayout(v_layout)
 
 
 if __name__ == "__main__":
@@ -27,7 +13,7 @@ if __name__ == "__main__":
 
     notebook = QWidget()
     question_setting = QuestionSetting()
-    input_area = InputArea()
+
     output_area = OutputArea()
     sidebar_notebook = SideBarNotebook()
 
@@ -38,11 +24,10 @@ if __name__ == "__main__":
 
 
     # Get generate question button
-    #question_setting.question_button.generate_question_button.clicked.connect()
+
 
     # Question input layout
     question_input_layout = QVBoxLayout()
-    question_input_layout.addWidget(input_area)
     question_input_layout.addWidget(question_setting)
 
     # AI Model output layout

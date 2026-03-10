@@ -1,8 +1,7 @@
-from PySide6.QtWidgets import QWidget,  QCheckBox, QHBoxLayout, QVBoxLayout, QGroupBox, QRadioButton, QSpinBox, QPushButton,QButtonGroup, QSizePolicy, QLabel, QPushButton
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QTabWidget, QPushButton, QLabel, QLineEdit,QSpacerItem, QFileDialog, QTextEdit,  QSizePolicy, QCheckBox, QGroupBox, QRadioButton, QSpinBox, QPlainTextEdit, QMessageBox
 from PySide6.QtCore import QObject, Signal, Slot, Qt
 import sqlite3
-
-
+import os 
 
 class QuestionSetting(QWidget):
     def __init__(self):
@@ -11,6 +10,8 @@ class QuestionSetting(QWidget):
         self.setWindowTitle("Question Setting")
         
         self.question_button = QuestionButton()
+        self.input_area = InputArea()
+
         
 
 
@@ -40,6 +41,14 @@ class QuestionSetting(QWidget):
         essay.toggled.connect(self.essay_box_toggled)
         essay.setStyleSheet("font-size:14px;")
 
+        # Question types boolean, add to Database
+        self.multiple_choice_bool = False
+        self.true_or_false_bool = False
+        self.identification_bool = False
+        self.essay_bool = False
+
+
+
         #Spinboxes
         self.___spinbox_group()
         
@@ -61,13 +70,22 @@ class QuestionSetting(QWidget):
         language_label = QLabel("Select Language")
         language_label.setStyleSheet("font-size:16px;")
         language.setStyleSheet("border:0;")
-        english = QRadioButton("English")
-        filipino = QRadioButton("Filipino")
+        self.english = QRadioButton("English")
+        self.filipino = QRadioButton("Filipino")
+
+        # Language variable
+        self.language_chosen = ""
+
+
+        # When radio button is clicked
+        self.english.clicked.connect(self.language_chosen_english)
+        self.filipino.clicked.connect(self.language_chosen_filipino)
+        
 
         language_vlayout = QVBoxLayout()
         language_vlayout.addWidget(language_label)
-        language_vlayout.addWidget(english)
-        language_vlayout.addWidget(filipino)
+        language_vlayout.addWidget(self.english)
+        language_vlayout.addWidget(self.filipino)
         language.setLayout(language_vlayout)
 
 
@@ -90,39 +108,143 @@ class QuestionSetting(QWidget):
 
 
 
-
+        v_layout.addWidget(self.input_area)
         v_layout.addLayout(h_layout)
         v_layout.addWidget(self.question_button)
 
         self.setLayout(v_layout)
+
+        self.question_button.generate_question_button.clicked.connect(self.get_question)
+
+    def language_chosen_english(self):
+        if self.english.isChecked():
+            self.language_chosen = "English"
+            print(self.language_chosen)
+
+    def language_chosen_filipino(self):
+        if self.filipino.isChecked():
+            self.language_chosen = "Filipino"
+            print(self.language_chosen)
+            
+
+    def get_question(self):
+        self.multiple_choice_bool = self.multiple_choice_bool
+        self.true_or_false_bool = self.true_or_false_bool
+        self.identification_bool = self.identification_bool
+        self.essay_bool = self.essay_bool
+        self.file = self.input_area.textbox.text()
+        self.text_input = self.input_area.input_message.toPlainText()
+
+
+        print('\n\n')
+        print('File:', self.file)
+        print('Text input:', self.text_input)
+
+        print('-- Question Types and Amount--\n\n')
+        print('Multiple choice:',self.multiple_choice_bool)
+        print('True or false:',self.true_or_false_bool)
+        print('Identification:',self.identification_bool)
+        print('Essay:',self.essay_bool)
+        print('')
+
+        self.multiple_choice_qty = self.multiple_choice_qty
+        self.true_or_false_qty = self.true_or_false_qty
+        self.identification_qty = self.identification_qty
+        self.essay_qty = self.essay_qty
+
+        print('Multiple choice amount:',self.multiple_choice_qty)
+        print('True or false amount:',self.true_or_false_qty)
+        print('Identification amount:',self.identification_qty)
+        print('Essay amount:',self.essay_qty)
+        print('')
+
+        self.language_chosen = self.language_chosen
+        print("Language:",self.language_chosen)
+
+        if self.file == "" and self.text_input == "":
+            button = QMessageBox.critical(
+            self,
+            "Error!",
+            " No file or text input found.\nPlease input a file or text message.",
+            buttons=QMessageBox.Ignore,
+            defaultButton=QMessageBox.Ignore,
+        )
+           
+
+            if button == QMessageBox.Ignore:
+                print("Ignore")
+
+        if self.language_chosen == "":
+            button = QMessageBox.critical(
+            self,
+            "Error!",
+            "No language selected.\nPlease select a language.",
+            buttons=QMessageBox.Ignore,
+            defaultButton=QMessageBox.Ignore,
+        )
+
+            if button == QMessageBox.Ignore:
+                print("Ignore")
+
+
+
+
+
         
     # Signal Modules
     def multiple_box_toggled(self,checked): 
         if checked:
             self.multiple_choice_spinbox.setDisabled(False)
+            self.multiple_choice_bool = True
+            print(self.multiple_choice_bool)
+            self.multiple_choice_spinbox.setMinimum(1)
         else:
             self.multiple_choice_spinbox.setDisabled(True)
+            self.multiple_choice_spinbox.setMinimum(0)
+            self.multiple_choice_spinbox.setValue(0)
+            self.multiple_choice_bool = False
+            print(self.multiple_choice_bool)
 
 
     def trueorfalse_box_toggled(self,checked): 
         if checked:
             self.true_or_false_spinbox.setDisabled(False)
+            self.true_or_false_bool = True
+            print(self.multiple_choice_bool)
+            self.true_or_false_spinbox.setMinimum(1)
         else:
             self.true_or_false_spinbox.setDisabled(True)
-
+            self.true_or_false_bool = False
+            print(self.multiple_choice_bool)
+            self.true_or_false_spinbox.setMinimum(0)
+            self.true_or_false_spinbox.setValue(0)
 
     def identification_box_toggled(self,checked): 
         if checked:
             self.identification_spinbox.setDisabled(False)
+            self.identification_bool = True
+            print(self.multiple_choice_bool)
+            self.identification_spinbox.setMinimum(1)
         else:
             self.identification_spinbox.setDisabled(True)
+            self.identification_bool = False
+            print(self.multiple_choice_bool)
+            self.identification_spinbox.setMinimum(0)
+            self.identification_spinbox.setValue(0)
 
 
     def essay_box_toggled(self,checked): 
         if checked:
             self.essay_spinbox.setDisabled(False)
+            self.essay_bool = True
+            print(self.multiple_choice_bool)
+            self.essay_spinbox.setMinimum(1)
         else:
             self.essay_spinbox.setDisabled(True)
+            self.essay_bool = False
+            print(self.multiple_choice_bool)
+            self.essay_spinbox.setMinimum(0)
+            self.essay_spinbox.setValue(0)
 
 
     # Helper modules, makes code simpler
@@ -138,6 +260,50 @@ class QuestionSetting(QWidget):
         self.true_or_false_spinbox.setDisabled(True)
         self.identification_spinbox.setDisabled(True)
         self.essay_spinbox.setDisabled(True)
+
+        # Question Amount, add to Database
+        self.multiple_choice_qty = self.multiple_choice_spinbox.value()
+        self.true_or_false_qty = self.true_or_false_spinbox.value()
+        self.identification_qty = self.identification_spinbox.value()
+        self.essay_qty = self.essay_spinbox.value()
+
+        self.multiple_choice_spinbox.valueChanged.connect(self.multiple_choice_qty_changed)
+        self.true_or_false_spinbox.valueChanged.connect(self.true_or_false_qty_changed)
+        self.identification_spinbox.valueChanged.connect(self.identification_qty_changed) 
+        self.essay_spinbox.valueChanged.connect(self.essay_qty_changed) 
+
+    # Changes and gets multiple choice spinbox amount
+    def multiple_choice_qty_changed(self, i):
+        self.multiple_choice_qty = i
+        print(self.multiple_choice_qty)
+
+        # Minimum value of spinbox is 1 not 0
+
+
+    # Changes and gets true or false spinbox amount
+    def true_or_false_qty_changed(self, i):
+        self.true_or_false_qty = i
+        print(self.true_or_false_qty)
+        
+
+    # Changes and gets identification spinbox amount
+    def identification_qty_changed(self, i):
+        self.identification_qty = i
+        print(self.identification_qty)
+        
+
+    # Changes and gets essay spinbox amount
+    def essay_qty_changed(self, i):
+        self.essay_qty = i
+        print(self.essay_qty)
+        
+
+
+
+
+
+
+
 
     def __question_spinbox_layout(self, qty_vlayout, multiple_choice_spinbox, true_or_false_spinbox, identification_spinbox, essay_spinbox):
         qty_vlayout.addWidget(multiple_choice_spinbox)
@@ -158,8 +324,8 @@ class SpinBox(QSpinBox):
     def __init__(self):
         super().__init__()
         self.setMaximum(10)
-        self.setMinimum(1)
-        self.setValue(1)
+        self.setMinimum(0)
+        #self.setValue(1)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
 class QuestionButton(QWidget):
@@ -182,7 +348,13 @@ class QuestionButton(QWidget):
 
         self.setLayout(button_layout)
 
+
+
+
+        
+
 class SideBarNotebook(QWidget):
+
     def __init__(self):
         super().__init__()
 
@@ -207,6 +379,102 @@ class SideBarNotebook(QWidget):
 
         self.setLayout(sidebar_layout)    
 
+class InputArea(QWidget):
+    def __init__(self):
+        super().__init__()
+       
+
+        self.tab_widget = QTabWidget(self)
+
+
+        widget_file = QWidget()
+        label_file = QLabel("Input (PDF, DOC, DOCX, or PPT) file :")
+        label_file.setStyleSheet('font-size: 14px;')
+        self.input_file = QPushButton()
+        self.input_file.setText("Choose File")
+        self.input_file.setStyleSheet("padding:8px;font-size: 14px; text-align: center;")
+        self.input_file.clicked.connect(self.getFileName)
+
+
+        self.textbox = QLabel()
+        self.textbox.setDisabled(True)
+        self.textbox.setStyleSheet("padding:8px;font-size: 14px;")
+        self.textbox.setMinimumHeight(400)
+        self.remove_file = QPushButton()
+        self.remove_file.setText("Remove File")
+        self.remove_file.setStyleSheet("padding:8px;font-size: 14px; text-align: center;")
+        self.remove_file.clicked.connect(self.removeFileName)
+
+
+
+        
+
+
+        form_layout = QVBoxLayout()
+        form_layout.addWidget(label_file)
+        form_layout.addWidget(self.input_file)
+        form_layout.addWidget(self.textbox)
+        form_layout.addWidget(self.remove_file)
+        form_layout.setAlignment(Qt.AlignTop)
+        widget_file.setLayout(form_layout)
+
+
+        widget_text_input = QWidget()
+        self.input_message = QPlainTextEdit()
+        self.input_message.textChanged.connect(self.isEmpty)
+
+        text_input_layout = QVBoxLayout()
+        text_input_layout.addWidget(self.input_message)
+        widget_text_input.setLayout(text_input_layout)
+
+
+        #Add tabs to widget
+        self.tab_widget.addTab(widget_file,"File")
+        self.tab_widget.addTab(widget_text_input,"Text")
+
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.tab_widget)
+
+        widget_file.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        widget_text_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        widget_file.setMinimumSize(600,500)
+        widget_text_input.setMinimumSize(600,500)
+
+        self.setLayout(layout)
+
+
+
+
+
+
+    def getFileName(self):
+        file_filter = "Word File (*.docx *.doc);; PDF (*.pdf);; Presentation (*.pptx *.ppt);; Text File (*.txt)"
+        self.response = QFileDialog.getOpenFileName(
+            parent=self,
+            caption='Select a file',
+            dir=os.getcwd(),
+            filter=file_filter,
+            selectedFilter='Word File (*.docx *.doc)'
+        )
+        print(self.response)
+        self.textbox.setText(self.response[0])
+        self.input_file.setText("Update File")
+        self.tab_widget.setTabEnabled(1, False)
+        return self.response
+
+    def removeFileName(self):
+        self.tab_widget.setTabEnabled(1, True)
+        self.input_file.setText("Choose File")
+        self.textbox.setText("")
+        print("File Cancelled")
+
+    def isEmpty(self):
+        text = self.input_message.toPlainText()
+        if text != "":
+            self.tab_widget.setTabEnabled(0, False)
+        else:
+            self.tab_widget.setTabEnabled(0, True)
 
 
 
