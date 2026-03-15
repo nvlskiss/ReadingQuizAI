@@ -1,6 +1,8 @@
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 import torch
 import re
+import random
+import difflib
 
 class QuestionGenerator:
     def __init__(self):
@@ -16,6 +18,20 @@ class QuestionGenerator:
             
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             self.model.to(self.device)
+            self.random = random.Random()
+            self.weak_answer_words = {
+                "while", "when", "where", "because", "although", "though", "since", "until", "after",
+                "before", "during", "through", "and", "or", "but", "then", "than", "just", "very",
+                "there", "their", "every", "some", "many", "much", "one", "two", "three"
+            }
+            self.semantic_pools = {
+                "time_of_day": ["morning", "afternoon", "evening", "night", "dawn", "noon", "midnight"],
+                "duration": ["minutes", "an hour", "hours", "a day", "days", "a week", "weeks", "long ago"],
+                "frequency": ["always", "often", "sometimes", "rarely", "never", "daily", "weekly"],
+                "number": ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
+                "direction": ["left", "right", "north", "south", "east", "west", "up", "down"],
+                "generic_noun": [],
+            }
             
             print(f"✓ Model loaded successfully on {self.device}")
         except Exception as e:
@@ -26,34 +42,42 @@ class QuestionGenerator:
         """Generate quiz questions using fine-tuned T5 model"""
         
         try:
-            text = text.strip()
+            text = self._normalize_text(text)
             if len(text) > 1000:
                 text = text[:1000]
             
             # Extract sentences and key concepts
             sentences = self._split_sentences(text)
             questions_data = []
+            seen_pairs = set()
+            target_count = sum(quantities.values())
             
             for sentence in sentences:
-                if len(questions_data) >= sum(quantities.values()):
+                if len(questions_data) >= target_count:
                     break
                 
                 # Extract answer candidates (named entities, important nouns)
                 answers = self._extract_key_phrases(sentence)
                
                 for answer in answers:
-                    if len(questions_data) >= sum(quantities.values()):
+                    if len(questions_data) >= target_count:
                         break
+
+                    pair_key = (sentence.lower(), answer.lower())
+                    if pair_key in seen_pairs:
+                        continue
                     
                     # Generate question using proper T5 format
                     question = self._generate_question_for_answer(sentence, answer)
                     
                     if question:
+                        seen_pairs.add(pair_key)
                         questions_data.append({
                             'question': question,
                             'answer': answer,
                             'sentence': sentence
                         })
+                        break
             
             if not questions_data:
                 return "Error: Could not generate questions from the text."
@@ -69,33 +93,57 @@ class QuestionGenerator:
     
     def _split_sentences(self, text):
         """Split text into sentences"""
-        sentences = re.split(r'[.!?]+', text)
-        return [s.strip() for s in sentences if len(s.strip()) > 15]
+        raw_sentences = re.split(r'[.!?]+', text)
+        cleaned_sentences = []
+        for raw_sentence in raw_sentences:
+            cleaned = self._normalize_text(raw_sentence)
+            if len(cleaned) > 20:
+                cleaned_sentences.append(cleaned)
+        return cleaned_sentences
     
     def _extract_key_phrases(self, sentence):
         """Extract key named entities and important nouns"""
-        # First, get capitalized words (proper nouns)
-        words = sentence.split()
+        words = re.findall(r"[A-Za-z][A-Za-z'\-]*", sentence)
+        if not words:
+            return []
+
+        time_phrases = self._extract_time_phrases(sentence)
+
+        stop_words = {
+            'is', 'are', 'was', 'were', 'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'with', 'by', 'from', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
+            'would', 'could', 'should', 'may', 'might', 'must', 'can', 'it', 'that', 'this', 'which', 'who',
+            'what', 'when', 'where', 'why', 'how', 'there', 'their', 'then', 'than', 'very', 'just', 'while',
+            'after', 'before', 'during', 'since', 'until', 'every'
+        }
+
         proper_nouns = []
-        
-        for word in words:
-            cleaned = word.strip(',;:"!?.').lower()
-            if word and word[0].isupper() and len(word) > 2 and cleaned not in ['the', 'a', 'an']:
-                proper_nouns.append(word.strip(',;:"!?.'))
-        
+        for index, word in enumerate(words):
+            cleaned_word = self._clean_token(word)
+            if not cleaned_word:
+                continue
+            is_probable_proper_noun = word[0].isupper() and len(cleaned_word) > 2 and cleaned_word.lower() not in stop_words
+            if is_probable_proper_noun and index != 0 and self._is_valid_answer_candidate(cleaned_word):
+                proper_nouns.append(cleaned_word)
+
         if proper_nouns:
-            return proper_nouns[:2]
-        
-        # If no proper nouns, extract longer nouns
-        stop_words = {'is', 'are', 'was', 'were', 'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'it', 'that', 'this', 'which', 'who', 'what', 'when', 'where', 'why', 'how'}
-        
+            return (time_phrases + proper_nouns)[:3]
+
         candidates = []
         for word in words:
-            cleaned = word.strip(',;:"!?.').lower()
-            if len(cleaned) > 4 and cleaned not in stop_words:
-                candidates.append(word.strip(',;:"!?.'))
-        
-        return candidates[:2] if candidates else []
+            cleaned_word = self._clean_token(word)
+            if len(cleaned_word) > 3 and cleaned_word.lower() not in stop_words and self._is_valid_answer_candidate(cleaned_word):
+                candidates.append(cleaned_word)
+
+        unique_candidates = []
+        seen = set()
+        for candidate in candidates:
+            lowered = candidate.lower()
+            if lowered not in seen:
+                seen.add(lowered)
+                unique_candidates.append(candidate)
+
+        return (time_phrases + unique_candidates)[:3]
     
     def _generate_question_for_answer(self, sentence, answer):
         """Generate a question for the given answer using T5"""
@@ -119,8 +167,18 @@ class QuestionGenerator:
         
         # Clean up T5 output
         question = re.sub(r'^question:\s*', '', question, flags=re.IGNORECASE)
-        
-        return question if len(question) > 8 else None
+        question = self._normalize_text(question)
+
+        if not question.endswith("?"):
+            question = f"{question}?"
+
+        if len(question) <= 8:
+            return None
+
+        if answer.lower() in question.lower():
+            return None
+
+        return question
     
     def _format_by_type(self, questions_data, quantities):
         """Format questions according to requested types and return as formatted string"""
@@ -128,30 +186,73 @@ class QuestionGenerator:
         formatted = ""
         q_num = 1
         q_idx = 0
+        used_question_texts = set()
         
         # Multiple Choice
         mc_count = quantities.get("multiple_choice", 0)
         for i in range(mc_count):
             if q_idx < len(questions_data):
-                q = questions_data[q_idx]
-                options = [q['answer']] + self._get_distractors(q['sentence'], q['answer'], 3)
-                
-                formatted += f"{q_num}. {q['question']}\n"
+                question_data = questions_data[q_idx]
+                normalized_question = question_data['question'].strip().lower()
+                if normalized_question in used_question_texts:
+                    q_idx += 1
+                    continue
+
+                options, answer_label = self._build_multiple_choice_options(question_data)
+                used_question_texts.add(normalized_question)
+
+                formatted += f"{q_num}. {question_data['question']}\n"
                 formatted += f"A) {options[0]}\n"
-                formatted += f"B) {options[1] if len(options) > 1 else 'Option 2'}\n"
-                formatted += f"C) {options[2] if len(options) > 2 else 'Option 3'}\n"
-                formatted += f"D) {options[3] if len(options) > 3 else 'Option 4'}\n"
-                formatted += "Answer: A\n\n"
+                formatted += f"B) {options[1]}\n"
+                formatted += f"C) {options[2]}\n"
+                formatted += f"D) {options[3]}\n"
+                formatted += f"Answer: {answer_label}\n"
+                formatted += f"Context: {self._format_context(question_data['sentence'])}\n\n"
                 q_num += 1
                 q_idx += 1
+
+        # True or False
+        tf_count = quantities.get("true_or_false", 0)
+        tf_created = 0
+        used_tf_contexts = set()
+        used_tf_statements = set()
+        while tf_created < tf_count and q_idx < len(questions_data):
+            question_data = questions_data[q_idx]
+            context_key = self._normalize_text(question_data['sentence']).lower()
+            if context_key in used_tf_contexts:
+                q_idx += 1
+                continue
+
+            statement, answer = self._build_true_false_item(question_data, tf_created)
+            statement_key = self._normalize_text(statement).lower()
+            if statement_key in used_tf_statements:
+                q_idx += 1
+                continue
+
+            used_tf_contexts.add(context_key)
+            used_tf_statements.add(statement_key)
+
+            formatted += f"{q_num}. True or False: {statement}\n"
+            formatted += f"Answer: {answer}\n"
+            formatted += f"Context: {self._format_context(question_data['sentence'])}\n\n"
+            q_num += 1
+            tf_created += 1
+            q_idx += 1
         
         # Identification
         id_count = quantities.get("identification", 0)
         for i in range(id_count):
             if q_idx < len(questions_data):
-                q = questions_data[q_idx]
-                formatted += f"{q_num}. {q['question']}\n"
-                formatted += f"Answer: {q['answer']}\n\n"
+                question_data = questions_data[q_idx]
+                normalized_question = question_data['question'].strip().lower()
+                if normalized_question in used_question_texts:
+                    q_idx += 1
+                    continue
+
+                used_question_texts.add(normalized_question)
+                formatted += f"{q_num}. {question_data['question']}\n"
+                formatted += f"Answer: {question_data['answer']}\n"
+                formatted += f"Context: {self._format_context(question_data['sentence'])}\n\n"
                 q_num += 1
                 q_idx += 1
         
@@ -159,25 +260,228 @@ class QuestionGenerator:
         essay_count = quantities.get("essay", 0)
         for i in range(essay_count):
             if q_idx < len(questions_data):
-                q = questions_data[q_idx]
-                formatted += f"{q_num}. {q['question']}\n\n"
+                question_data = questions_data[q_idx]
+                normalized_question = question_data['question'].strip().lower()
+                if normalized_question in used_question_texts:
+                    q_idx += 1
+                    continue
+
+                used_question_texts.add(normalized_question)
+                formatted += f"{q_num}. {question_data['question']}\n"
+                formatted += f"Context: {self._format_context(question_data['sentence'])}\n\n"
                 q_num += 1
                 q_idx += 1
         
         return formatted
+
+    def _build_true_false_item(self, question_data, index):
+        statement = question_data['sentence'].strip()
+        make_false = index % 2 == 1
+
+        if make_false:
+            false_statement = self._create_false_statement(question_data)
+            if false_statement:
+                statement = false_statement
+                answer = "False"
+            else:
+                answer = "True"
+        else:
+            answer = "True"
+
+        if statement and not statement.endswith('.'):
+            statement += '.'
+
+        return statement, answer
+
+    def _create_false_statement(self, question_data):
+        sentence = question_data['sentence'].strip()
+        answer = question_data['answer'].strip()
+
+        candidates = [
+            self._replace_time_expression(sentence),
+            self._replace_number_expression(sentence),
+            self._replace_answer_token(sentence, answer),
+            self._toggle_negation(sentence),
+        ]
+
+        for candidate in candidates:
+            if self._is_valid_false_statement(sentence, candidate):
+                return candidate
+
+        return None
+
+    def _negate_sentence(self, sentence):
+        patterns = [
+            (r'\b(is|are|was|were|has|have|had|can|could|will|would|should|may|might|must)\b', r'\1 not'),
+            (r'\b(do|does|did)\b', r'\1 not'),
+        ]
+
+        for pattern, replacement in patterns:
+            negated, count = re.subn(pattern, replacement, sentence, count=1, flags=re.IGNORECASE)
+            if count > 0:
+                return negated
+
+        return sentence
+
+    def _replace_time_expression(self, sentence):
+        time_pattern = r'\b(morning|afternoon|evening|night|noon|midnight|dawn)\b'
+        match = re.search(time_pattern, sentence, flags=re.IGNORECASE)
+        if not match:
+            return None
+
+        original = match.group(1)
+        replacement_candidates = [
+            item for item in self.semantic_pools["time_of_day"]
+            if item.lower() != original.lower()
+        ]
+        if not replacement_candidates:
+            return None
+
+        replacement = self.random.choice(replacement_candidates)
+        return re.sub(time_pattern, replacement, sentence, count=1, flags=re.IGNORECASE)
+
+    def _replace_number_expression(self, sentence):
+        number_pattern = r'\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b'
+        match = re.search(number_pattern, sentence, flags=re.IGNORECASE)
+        if not match:
+            return None
+
+        original = match.group(1)
+        replacement_candidates = [
+            item for item in self.semantic_pools["number"]
+            if item.lower() != original.lower()
+        ]
+        if not replacement_candidates:
+            return None
+
+        replacement = self.random.choice(replacement_candidates)
+        return re.sub(number_pattern, replacement, sentence, count=1, flags=re.IGNORECASE)
+
+    def _replace_answer_token(self, sentence, answer):
+        if not answer:
+            return None
+
+        cleaned_answer = self._clean_token(answer)
+        if not cleaned_answer or not self._is_valid_answer_candidate(cleaned_answer):
+            return None
+
+        answer_type = self._infer_answer_type(cleaned_answer)
+        semantic_distractors = self._get_semantic_distractors(cleaned_answer, 5)
+        context_distractors = self._get_distractors(sentence, cleaned_answer, 8)
+        replacement_candidates = semantic_distractors + context_distractors
+
+        for candidate in replacement_candidates:
+            replacement = self._clean_token(candidate)
+            if not replacement:
+                continue
+            if replacement.lower() == cleaned_answer.lower():
+                continue
+            if answer_type == "generic_noun" and replacement.lower() in self.weak_answer_words:
+                continue
+
+            pattern = re.compile(rf'\b{re.escape(cleaned_answer)}\b', flags=re.IGNORECASE)
+            swapped = pattern.sub(replacement, sentence, count=1)
+            if swapped != sentence:
+                return swapped
+
+        return None
+
+    def _toggle_negation(self, sentence):
+        contraction_patterns = [
+            (r"\bwasn't\b", "was"),
+            (r"\bweren't\b", "were"),
+            (r"\bisn't\b", "is"),
+            (r"\baren't\b", "are"),
+            (r"\bhasn't\b", "has"),
+            (r"\bhaven't\b", "have"),
+            (r"\bhadn't\b", "had"),
+            (r"\bcan't\b", "can"),
+            (r"\bcouldn't\b", "could"),
+            (r"\bwon't\b", "will"),
+            (r"\bwouldn't\b", "would"),
+            (r"\bshouldn't\b", "should"),
+            (r"\bdidn't\b", "did"),
+            (r"\bdoesn't\b", "does"),
+            (r"\bdon't\b", "do"),
+        ]
+
+        for pattern, replacement in contraction_patterns:
+            toggled, count = re.subn(pattern, replacement, sentence, count=1, flags=re.IGNORECASE)
+            if count > 0:
+                return toggled
+
+        remove_not_patterns = [
+            (r'\b(is|are|was|were|has|have|had|can|could|will|would|should|may|might|must)\s+not\b', r'\1'),
+            (r'\b(do|does|did)\s+not\b', r'\1'),
+        ]
+
+        for pattern, replacement in remove_not_patterns:
+            toggled, count = re.subn(pattern, replacement, sentence, count=1, flags=re.IGNORECASE)
+            if count > 0:
+                return toggled
+
+        return self._negate_sentence(sentence)
+
+    def _is_valid_false_statement(self, original, candidate):
+        if not candidate:
+            return False
+
+        original_clean = self._normalize_text(original)
+        candidate_clean = self._normalize_text(candidate)
+        if not candidate_clean or candidate_clean.lower() == original_clean.lower():
+            return False
+
+        if re.search(r'\b(\w+)\s+\1\b', candidate_clean, flags=re.IGNORECASE):
+            return False
+
+        if len(candidate_clean) < 12:
+            return False
+
+        if self._count_meaningful_token_changes(original_clean, candidate_clean) < 2:
+            return False
+
+        return True
+
+    def _count_meaningful_token_changes(self, original, candidate):
+        stop_words = {
+            'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'and', 'or', 'but', 'in', 'on', 'at',
+            'to', 'for', 'of', 'with', 'by', 'from', 'it', 'that', 'this', 'which', 'who', 'there', 'their',
+            'as', 'into', 'onto', 'up', 'down', 'out', 'about'
+        }
+
+        original_tokens = re.findall(r"[A-Za-z0-9']+", original.lower())
+        candidate_tokens = re.findall(r"[A-Za-z0-9']+", candidate.lower())
+        matcher = difflib.SequenceMatcher(a=original_tokens, b=candidate_tokens)
+
+        changed_tokens = []
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                continue
+            changed_tokens.extend(original_tokens[i1:i2])
+            changed_tokens.extend(candidate_tokens[j1:j2])
+
+        meaningful_changes = [
+            token for token in changed_tokens
+            if token not in stop_words and len(token) > 2
+        ]
+
+        return len(set(meaningful_changes))
     
     def _get_distractors(self, sentence, correct_answer, count=3):
         """Get plausible distractor options from the sentence"""
-        words = sentence.split()
-        stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'it', 'that', 'this', 'which', 'who'}
+        words = re.findall(r"[A-Za-z][A-Za-z'\-]*", sentence)
+        stop_words = {
+            'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'and', 'or', 'but', 'in', 'on', 'at',
+            'to', 'for', 'of', 'with', 'by', 'from', 'it', 'that', 'this', 'which', 'who', 'there', 'their'
+        }
         
         candidates = []
         for word in words:
-            cleaned = word.strip(',;:"!?.').lower()
+            cleaned = self._clean_token(word).lower()
             if (cleaned not in stop_words and 
                 cleaned != correct_answer.lower() and 
-                len(word.strip(',;:"!?.')) > 2):
-                candidates.append(word.strip(',;:"!?.'))
+                len(cleaned) > 2):
+                candidates.append(self._clean_token(word))
         
         # Remove duplicates while preserving order
         seen = set()
@@ -186,5 +490,126 @@ class QuestionGenerator:
             if c.lower() not in seen:
                 seen.add(c.lower())
                 unique.append(c)
-        
-        return unique[:count] if unique else ['Option 2', 'Option 3', 'Option 4']
+
+        return unique[:count]
+
+    def _build_multiple_choice_options(self, question_data):
+        correct_answer = self._clean_token(question_data['answer'])
+        semantic_distractors = self._get_semantic_distractors(correct_answer, 4)
+        context_distractors = self._get_distractors(question_data['sentence'], correct_answer, 8)
+        distractors = semantic_distractors + context_distractors
+
+        cleaned_distractors = []
+        for distractor in distractors:
+            cleaned = self._clean_token(distractor)
+            if cleaned and cleaned.lower() != correct_answer.lower():
+                cleaned_distractors.append(cleaned)
+
+        unique_distractors = []
+        seen = set()
+        for distractor in cleaned_distractors:
+            lowered = distractor.lower()
+            if lowered not in seen:
+                seen.add(lowered)
+                unique_distractors.append(distractor)
+
+        answer_type = self._infer_answer_type(correct_answer)
+        fallback_options = self.semantic_pools.get(answer_type, [])
+        for fallback_option in fallback_options:
+            if len(unique_distractors) >= 3:
+                break
+            if fallback_option.lower() != correct_answer.lower() and fallback_option.lower() not in seen:
+                seen.add(fallback_option.lower())
+                unique_distractors.append(fallback_option)
+
+        options = [correct_answer] + unique_distractors[:3]
+        while len(options) < 4:
+            options.append(f"Option {len(options) + 1}")
+
+        self.random.shuffle(options)
+        answer_index = options.index(correct_answer)
+        answer_label = ["A", "B", "C", "D"][answer_index]
+
+        return options, answer_label
+
+    def _extract_time_phrases(self, sentence):
+        patterns = [
+            r"\b(morning|afternoon|evening|night|noon|midnight|dawn)\b",
+            r"\b(an hour|a day|a week|\d+\s+(minute|minutes|hour|hours|day|days|week|weeks))\b",
+            r"\b(long ago|later|earlier)\b",
+        ]
+
+        extracted = []
+        seen = set()
+        lowered_sentence = sentence.lower()
+        for pattern in patterns:
+            for match in re.finditer(pattern, lowered_sentence, flags=re.IGNORECASE):
+                phrase = match.group(1) if match.lastindex else match.group(0)
+                cleaned = self._clean_token(phrase)
+                if cleaned and cleaned.lower() not in seen and self._is_valid_answer_candidate(cleaned):
+                    seen.add(cleaned.lower())
+                    extracted.append(cleaned)
+        return extracted
+
+    def _is_valid_answer_candidate(self, candidate):
+        lowered = candidate.lower()
+        if lowered in self.weak_answer_words:
+            return False
+        if len(lowered) <= 2:
+            return False
+        if re.fullmatch(r"\d+", lowered):
+            return False
+        return True
+
+    def _infer_answer_type(self, answer):
+        lowered = answer.lower().strip()
+
+        if lowered in self.semantic_pools["time_of_day"]:
+            return "time_of_day"
+
+        if any(token in lowered for token in ["minute", "hour", "day", "week", "ago"]):
+            return "duration"
+
+        if lowered in self.semantic_pools["frequency"]:
+            return "frequency"
+
+        if lowered in self.semantic_pools["number"] or re.fullmatch(r"\d+", lowered):
+            return "number"
+
+        if lowered in self.semantic_pools["direction"]:
+            return "direction"
+
+        return "generic_noun"
+
+    def _get_semantic_distractors(self, correct_answer, count):
+        answer_type = self._infer_answer_type(correct_answer)
+        pool = self.semantic_pools.get(answer_type, [])
+
+        distractors = [item for item in pool if item.lower() != correct_answer.lower()]
+        self.random.shuffle(distractors)
+        return distractors[:count]
+
+    def _clean_token(self, token):
+        cleaned = self._normalize_text(token)
+        cleaned = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$", "", cleaned)
+        return cleaned
+
+    def _format_context(self, sentence):
+        context = self._normalize_text(sentence)
+        if context and not context.endswith("."):
+            context += "."
+        return context
+
+    def _normalize_text(self, text):
+        normalized = str(text)
+        normalized = normalized.replace("\u2019", "'")
+        normalized = normalized.replace("\u2018", "'")
+        normalized = normalized.replace("\u201c", '"')
+        normalized = normalized.replace("\u201d", '"')
+        normalized = normalized.replace("\u2014", "-")
+        normalized = normalized.replace("\u2013", "-")
+        normalized = normalized.replace("**", "")
+        normalized = re.sub(r"\s+", " ", normalized)
+        normalized = re.sub(r"\s*—\s*", " - ", normalized)
+        normalized = normalized.replace("_", "")
+        return normalized.strip()
