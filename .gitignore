@@ -1,0 +1,35 @@
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local environment/config
+.env
+.env.*
+
+# Local databases
+*.db
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Training artifacts and checkpoints
+models/**/checkpoint-*/
+models/**/runs/
+
+# Large temporary model/trainer files
+*.bin
+*.safetensors.index.json

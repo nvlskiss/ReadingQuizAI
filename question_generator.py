@@ -3,13 +3,17 @@ import torch
 import re
 import random
 import difflib
+import os
 
 
 class QuestionGenerator:
     def __init__(self):
-        self.model_name = "mrm8488/t5-base-finetuned-question-generation-ap"
+        self.base_model_name = "mrm8488/t5-base-finetuned-question-generation-ap"
+        self.local_model_dir = os.getenv("READINGQUIZ_MODEL_DIR", "models/qg_verify_full")
+        self.model_name = self._resolve_model_source()
 
         print("Loading fine-tuned T5 model...")
+        print(f"Model source: {self.model_name}")
         print("(This may take a moment on first run as models download automatically from HuggingFace)")
 
         try:
@@ -37,6 +41,27 @@ class QuestionGenerator:
         except Exception as error:
             print(f"✗ Error loading model: {error}")
             raise
+
+    def _resolve_model_source(self):
+        if not os.path.isdir(self.local_model_dir):
+            return self.base_model_name
+
+        config_path = os.path.join(self.local_model_dir, "config.json")
+        if os.path.isfile(config_path):
+            return self.local_model_dir
+
+        checkpoint_dirs = []
+        for child in os.listdir(self.local_model_dir):
+            if child.startswith("checkpoint-"):
+                full_path = os.path.join(self.local_model_dir, child)
+                if os.path.isdir(full_path):
+                    checkpoint_dirs.append(full_path)
+
+        if checkpoint_dirs:
+            checkpoint_dirs.sort(key=lambda path: int(path.rsplit("checkpoint-", 1)[-1]))
+            return checkpoint_dirs[-1]
+
+        return self.base_model_name
 
     def generate_questions(self, text, question_types, quantities, language="English"):
         try:
@@ -175,88 +200,94 @@ class QuestionGenerator:
     def _format_by_type(self, questions_data, quantities):
         formatted = ""
         q_num = 1
-        q_idx = 0
+        tf_created = 0
+        used_contexts = set()
         used_question_texts = set()
+        used_tf_statements = set()
 
-        mc_count = quantities.get("multiple_choice", 0)
-        for _ in range(mc_count):
-            if q_idx < len(questions_data):
-                question_data = questions_data[q_idx]
-                normalized_question = question_data["question"].strip().lower()
-                if normalized_question in used_question_texts:
-                    q_idx += 1
+        question_pool = list(questions_data)
+        self.random.shuffle(question_pool)
+
+        requested_types = []
+        for question_type in ("multiple_choice", "true_or_false", "identification", "essay"):
+            requested_types.extend([question_type] * quantities.get(question_type, 0))
+        self.random.shuffle(requested_types)
+
+        for question_type in requested_types:
+            selected_index = None
+            selected_item = None
+            selected_statement = None
+            selected_tf_answer = None
+            selected_statement_key = None
+
+            for index, question_data in enumerate(question_pool):
+                context_key = self._normalize_text(question_data["sentence"]).lower()
+                if context_key in used_contexts:
                     continue
 
-                options, answer_label = self._build_multiple_choice_options(question_data)
-                used_question_texts.add(normalized_question)
+                normalized_question = question_data["question"].strip().lower()
+                if normalized_question in used_question_texts:
+                    continue
 
-                formatted += f"{q_num}. {question_data['question']}\n"
+                if question_type == "true_or_false":
+                    statement, tf_answer = self._build_true_false_item(question_data, tf_created)
+                    statement_key = self._normalize_text(statement).lower()
+                    if statement_key in used_tf_statements:
+                        continue
+
+                    selected_index = index
+                    selected_item = question_data
+                    selected_statement = statement
+                    selected_tf_answer = tf_answer
+                    selected_statement_key = statement_key
+                    break
+
+                selected_index = index
+                selected_item = question_data
+                break
+
+            if selected_item is None:
+                continue
+
+            question_pool.pop(selected_index)
+
+            context_key = self._normalize_text(selected_item["sentence"]).lower()
+            normalized_question = selected_item["question"].strip().lower()
+            used_contexts.add(context_key)
+            used_question_texts.add(normalized_question)
+
+            if question_type == "multiple_choice":
+                options, answer_label = self._build_multiple_choice_options(selected_item)
+                formatted += f"{q_num}. {selected_item['question']}\n"
                 formatted += f"A) {options[0]}\n"
                 formatted += f"B) {options[1]}\n"
                 formatted += f"C) {options[2]}\n"
                 formatted += f"D) {options[3]}\n"
                 formatted += f"Answer: {answer_label}\n"
-                formatted += f"Context: {self._format_context(question_data['sentence'])}\n\n"
+                formatted += f"Context: {self._format_context(selected_item['sentence'])}\n\n"
                 q_num += 1
-                q_idx += 1
-
-        tf_count = quantities.get("true_or_false", 0)
-        tf_created = 0
-        used_tf_contexts = set()
-        used_tf_statements = set()
-        while tf_created < tf_count and q_idx < len(questions_data):
-            question_data = questions_data[q_idx]
-            context_key = self._normalize_text(question_data["sentence"]).lower()
-            if context_key in used_tf_contexts:
-                q_idx += 1
                 continue
 
-            statement, answer = self._build_true_false_item(question_data, tf_created)
-            statement_key = self._normalize_text(statement).lower()
-            if statement_key in used_tf_statements:
-                q_idx += 1
+            if question_type == "true_or_false":
+                used_tf_statements.add(selected_statement_key)
+                formatted += f"{q_num}. True or False: {selected_statement}\n"
+                formatted += f"Answer: {selected_tf_answer}\n"
+                formatted += f"Context: {self._format_context(selected_item['sentence'])}\n\n"
+                q_num += 1
+                tf_created += 1
                 continue
 
-            used_tf_contexts.add(context_key)
-            used_tf_statements.add(statement_key)
-
-            formatted += f"{q_num}. True or False: {statement}\n"
-            formatted += f"Answer: {answer}\n"
-            formatted += f"Context: {self._format_context(question_data['sentence'])}\n\n"
-            q_num += 1
-            tf_created += 1
-            q_idx += 1
-
-        id_count = quantities.get("identification", 0)
-        for _ in range(id_count):
-            if q_idx < len(questions_data):
-                question_data = questions_data[q_idx]
-                normalized_question = question_data["question"].strip().lower()
-                if normalized_question in used_question_texts:
-                    q_idx += 1
-                    continue
-
-                used_question_texts.add(normalized_question)
-                formatted += f"{q_num}. {question_data['question']}\n"
-                formatted += f"Answer: {question_data['answer']}\n"
-                formatted += f"Context: {self._format_context(question_data['sentence'])}\n\n"
+            if question_type == "identification":
+                formatted += f"{q_num}. {selected_item['question']}\n"
+                formatted += f"Answer: {selected_item['answer']}\n"
+                formatted += f"Context: {self._format_context(selected_item['sentence'])}\n\n"
                 q_num += 1
-                q_idx += 1
+                continue
 
-        essay_count = quantities.get("essay", 0)
-        for _ in range(essay_count):
-            if q_idx < len(questions_data):
-                question_data = questions_data[q_idx]
-                normalized_question = question_data["question"].strip().lower()
-                if normalized_question in used_question_texts:
-                    q_idx += 1
-                    continue
-
-                used_question_texts.add(normalized_question)
-                formatted += f"{q_num}. {question_data['question']}\n"
-                formatted += f"Context: {self._format_context(question_data['sentence'])}\n\n"
+            if question_type == "essay":
+                formatted += f"{q_num}. {selected_item['question']}\n"
+                formatted += f"Context: {self._format_context(selected_item['sentence'])}\n\n"
                 q_num += 1
-                q_idx += 1
 
         return formatted
 
