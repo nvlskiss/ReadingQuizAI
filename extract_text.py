@@ -6,6 +6,7 @@ from pptx import Presentation
 class ExtractText:
     def __init__(self, path):
         self.path = path
+        # TEXT OUTPUT OF PATH
         self.text_format = ""
 
 
