@@ -137,6 +137,61 @@ if __name__ == "__main__":
         if settings:
             question_setting.set_from_saved_settings(settings)
 
+    def handle_output_set_delete(set_payload):
+        button = QMessageBox.question(
+            notebook,
+            "Delete Set",
+            "Are you sure you want to delete this set?",
+            buttons=QMessageBox.Yes | QMessageBox.No,
+            defaultButton=QMessageBox.No,
+        )
+        if button != QMessageBox.Yes:
+            return
+
+        set_id = set_payload.get("set_id")
+        tab_index = int(set_payload.get("_tab_index", -1))
+
+        if set_id:
+            result = database.delete_notebook_set(int(set_id))
+            if not result.get("deleted"):
+                reason = result.get("reason", "unknown")
+                if reason == "last_set":
+                    QMessageBox.critical(
+                        notebook,
+                        "Delete Error",
+                        "You cannot delete the last set in a notebook.",
+                        buttons=QMessageBox.Ignore,
+                        defaultButton=QMessageBox.Ignore,
+                    )
+                    return
+
+                QMessageBox.critical(
+                    notebook,
+                    "Delete Error",
+                    "Set could not be deleted.",
+                    buttons=QMessageBox.Ignore,
+                    defaultButton=QMessageBox.Ignore,
+                )
+                return
+
+            notebook_id = result.get("notebook_id")
+            if notebook_id:
+                selected_notebook_id["value"] = notebook_id
+                data = database.get_notebook_sets(notebook_id)
+                if data and data.get("sets"):
+                    output_area.load_sets(data["sets"])
+                    question_setting.set_from_saved_settings(data["sets"][0].get("settings", {}))
+                else:
+                    output_area.clear_sets()
+                    output_area.add_set("Set 1", "")
+
+            refresh_sidebar()
+            QMessageBox.information(notebook, "Deleted", "Set deleted successfully.")
+            return
+
+        output_area.remove_set_at(tab_index)
+        QMessageBox.information(notebook, "Deleted", "Set deleted successfully.")
+
     def handle_notebook_delete(notebook_id):
         button = QMessageBox.question(
             notebook,
@@ -188,6 +243,7 @@ if __name__ == "__main__":
     question_setting.generate_requested.connect(handle_generate)
     question_setting.save_notebook_requested.connect(handle_save)
     output_area.set_changed.connect(handle_output_set_changed)
+    output_area.set_delete_requested.connect(handle_output_set_delete)
     sidebar_notebook.notebook_selected.connect(handle_notebook_selected)
     sidebar_notebook.notebook_delete_requested.connect(handle_notebook_delete)
     sidebar_notebook.notebook_rename_requested.connect(handle_notebook_rename)

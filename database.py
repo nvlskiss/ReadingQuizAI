@@ -280,6 +280,99 @@ class NotebookDatabase:
             conn.commit()
             return True
 
+    def delete_notebook_set(self, set_id: int) -> Dict:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT notebook_id, question_setting_id, quiz_id
+                FROM notebook_set
+                WHERE id = ?
+                """,
+                (set_id,),
+            )
+            target_set = cursor.fetchone()
+            if not target_set:
+                return {"deleted": False, "reason": "set_not_found"}
+
+            notebook_id = int(target_set["notebook_id"])
+
+            cursor.execute("SELECT COUNT(*) AS count FROM notebook_set WHERE notebook_id = ?", (notebook_id,))
+            set_count = int(cursor.fetchone()["count"])
+            if set_count <= 1:
+                return {"deleted": False, "reason": "last_set", "notebook_id": notebook_id}
+
+            question_setting_id = target_set["question_setting_id"]
+            quiz_id = target_set["quiz_id"]
+
+            cursor.execute("DELETE FROM notebook_set WHERE id = ?", (set_id,))
+
+            cursor.execute("SELECT name FROM notebook WHERE id = ?", (notebook_id,))
+            notebook_row = cursor.fetchone()
+            notebook_name = notebook_row["name"] if notebook_row else "Notebook"
+
+            cursor.execute(
+                """
+                SELECT id, quiz_id
+                FROM notebook_set
+                WHERE notebook_id = ?
+                ORDER BY set_index ASC, id ASC
+                """,
+                (notebook_id,),
+            )
+            remaining_sets = cursor.fetchall()
+
+            for index, row in enumerate(remaining_sets, start=1):
+                new_set_name = f"Set {index}"
+                cursor.execute(
+                    "UPDATE notebook_set SET set_index = ?, set_name = ? WHERE id = ?",
+                    (index, new_set_name, row["id"]),
+                )
+                cursor.execute(
+                    "UPDATE quiz SET title = ? WHERE id = ?",
+                    (f"{notebook_name} - {new_set_name}", row["quiz_id"]),
+                )
+
+            if remaining_sets:
+                first_set_id = remaining_sets[0]["id"]
+                cursor.execute(
+                    """
+                    SELECT question_setting_id, quiz_id
+                    FROM notebook_set
+                    WHERE id = ?
+                    """,
+                    (first_set_id,),
+                )
+                first_set = cursor.fetchone()
+                if first_set:
+                    cursor.execute(
+                        "UPDATE notebook SET question_setting_id = ?, quiz_id = ? WHERE id = ?",
+                        (first_set["question_setting_id"], first_set["quiz_id"], notebook_id),
+                    )
+
+            if quiz_id:
+                cursor.execute("SELECT COUNT(*) AS count FROM notebook_set WHERE quiz_id = ?", (quiz_id,))
+                quiz_set_refs = int(cursor.fetchone()["count"])
+                cursor.execute("SELECT COUNT(*) AS count FROM notebook WHERE quiz_id = ?", (quiz_id,))
+                quiz_notebook_refs = int(cursor.fetchone()["count"])
+                if quiz_set_refs == 0 and quiz_notebook_refs == 0:
+                    cursor.execute("DELETE FROM quiz WHERE id = ?", (quiz_id,))
+
+            if question_setting_id:
+                cursor.execute(
+                    "SELECT COUNT(*) AS count FROM notebook_set WHERE question_setting_id = ?",
+                    (question_setting_id,),
+                )
+                settings_set_refs = int(cursor.fetchone()["count"])
+                cursor.execute("SELECT COUNT(*) AS count FROM notebook WHERE question_setting_id = ?", (question_setting_id,))
+                settings_notebook_refs = int(cursor.fetchone()["count"])
+                if settings_set_refs == 0 and settings_notebook_refs == 0:
+                    cursor.execute("DELETE FROM question_setting WHERE id = ?", (question_setting_id,))
+
+            conn.commit()
+            return {"deleted": True, "notebook_id": notebook_id, "remaining_sets": len(remaining_sets)}
+
     def rename_notebook(self, notebook_id: int, new_name: str) -> bool:
         cleaned_name = new_name.strip()
         if not cleaned_name:
