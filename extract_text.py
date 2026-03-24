@@ -1,55 +1,76 @@
-import csv
-import pymupdf
-import docx
-from pptx import Presentation
+import os
+import importlib
+
+try:
+    import pymupdf
+except ImportError:
+    try:
+        import fitz as pymupdf
+    except ImportError:
+        pymupdf = None
+
+try:
+    import docx
+except ImportError:
+    docx = None
+
+try:
+    from pptx import Presentation
+except ImportError:
+    Presentation = None
+
 
 class ExtractText:
     def __init__(self, path):
-        self.path = path
-        # TEXT OUTPUT OF PATH
+        self.path = path or ""
         self.text_format = ""
 
+    def convert(self) -> str:
+        file_ext = os.path.splitext(self.path)[1].lower()
 
-        # Check if file type is a Text File
-        if ".txt" in self.path:
-            self.text_file(path)
-            print(self.text_format)
-            
-        # Check if file type is a PDF File
-        if ".pdf" in self.path:
-            self.pdf_file(path)
-            print(self.text_format)
-            
-        # Check if file type is a PDF File
-        if ".doc" in self.path:
-            self.doc_file(path)
-            print(self.text_format)
+        if file_ext == ".txt":
+            self.text_file(self.path)
+        elif file_ext == ".pdf":
+            self.pdf_file(self.path)
+        elif file_ext in (".doc", ".docx"):
+            self.doc_file(self.path)
+        elif file_ext in (".ppt", ".pptx"):
+            self.ppt_file(self.path)
 
-        # Check if file type is a PDF File
-        if ".ppt" in self.path:
-            self.ppt_file(path)
-            print(self.text_format)
-            
+        return self.text_format.strip()
+
+    def text_output(self) -> str:
+        return self.convert()
 
     def text_file(self, path):
-        with open(path, newline="") as text_file:
-            text_reader = csv.reader(text_file)
-            for row in text_reader:
-                self.text_format +=  "".join(row)
+        try:
+            with open(path, "r", encoding="utf-8") as text_file:
+                self.text_format = text_file.read()
+        except UnicodeDecodeError:
+            with open(path, "r", encoding="latin-1") as text_file:
+                self.text_format = text_file.read()
 
     def pdf_file(self, path):
-        doc = pymupdf.open(path)
-        for page in doc:
-            self.text_format += page.get_text().encode('utf8').decode('utf8')
+        pdf_module = self._load_pdf_module()
+        if pdf_module is None:
+            raise RuntimeError("PDF extraction requires 'pymupdf'. Install dependencies from requirements.txt")
 
-            self.text_format += (bytes((12,))).decode('utf8')
+        doc = pdf_module.open(path)
+        for page in doc:
+            self.text_format += page.get_text("text")
+            self.text_format += "\n"
 
     def doc_file(self, path):
+        if docx is None:
+            raise RuntimeError("Word extraction requires 'python-docx'. Install dependencies from requirements.txt")
         doc = docx.Document(path)
         for para in doc.paragraphs:
-            self.text_format += para.text
+            if para.text:
+                self.text_format += para.text + "\n"
 
     def ppt_file(self, path):
+        if Presentation is None:
+            raise RuntimeError("PowerPoint extraction requires 'python-pptx'. Install dependencies from requirements.txt")
         prs = Presentation(path)
         text_runs = []
 
@@ -60,6 +81,18 @@ class ExtractText:
                 for paragraph in shape.text_frame.paragraphs:
                     for run in paragraph.runs:
                         text_runs.append(run.text)
-        self.text_format = "".join(text_runs)
+        self.text_format = "\n".join([value for value in text_runs if value])
+
+    def _load_pdf_module(self):
+        if pymupdf is not None:
+            return pymupdf
+
+        try:
+            return importlib.import_module("pymupdf")
+        except ImportError:
+            try:
+                return importlib.import_module("fitz")
+            except ImportError:
+                return None
 
           

@@ -472,13 +472,20 @@ class NotebookDatabase:
                 except json.JSONDecodeError:
                     choices = []
 
+            question_type = row["question_type"]
+            answer_value = row["quiz_question_answer_correct"] or ""
+            context_value = context
+            if question_type == "essay":
+                answer_value = ""
+                context_value = ""
+
             questions.append(
                 {
-                    "question_type": row["question_type"],
+                    "question_type": question_type,
                     "question": row["content"],
                     "choices": choices,
-                    "answer": row["quiz_question_answer_correct"] or "",
-                    "context": context,
+                    "answer": answer_value,
+                    "context": context_value,
                 }
             )
 
@@ -516,6 +523,10 @@ class NotebookDatabase:
             elif answer_line:
                 question_type = "identification"
 
+            if question_type == "essay":
+                answer_line = ""
+                context_line = ""
+
             parsed_items.append(
                 {
                     "question_type": question_type,
@@ -536,9 +547,11 @@ class NotebookDatabase:
             output_lines.append(f"{number}. {item['question']}")
             for choice in item.get("choices", []):
                 output_lines.append(choice)
-            if item.get("answer"):
+            if item.get("question_type") == "essay":
+                output_lines.append("Note: Manual checking required.")
+            if item.get("question_type") != "essay" and item.get("answer"):
                 output_lines.append(f"Answer: {item['answer']}")
-            if item.get("context"):
+            if item.get("question_type") != "essay" and item.get("context"):
                 output_lines.append(f"Context: {item['context']}")
             output_lines.append("")
             number += 1

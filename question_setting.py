@@ -1,6 +1,8 @@
 import os
+import sys
 from typing import Dict, List
 
+from extract_text import ExtractText
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -113,6 +115,7 @@ class QuestionSetting(QWidget):
             "file_input": self.input_area.textbox.text().strip(),
             "text_input": self.input_area.input_message.toPlainText().strip(),
             "input_content": self.input_area.get_input_content(),
+            "input_error": self.input_area.last_input_error,
             "multiple_choice_bool": self.multiple_choice.isChecked(),
             "true_or_false_bool": self.true_or_false.isChecked(),
             "identification_bool": self.identification.isChecked(),
@@ -163,6 +166,8 @@ class QuestionSetting(QWidget):
 
     def _validate_payload(self, payload: Dict) -> str:
         if not payload["input_content"]:
+            if payload.get("input_error"):
+                return payload["input_error"]
             return "No file or text input found.\nPlease input a file or text message."
 
         if not payload["language"]:
@@ -349,6 +354,8 @@ class InputArea(QWidget):
     def __init__(self):
         super().__init__()
 
+        self.last_input_error = ""
+
         self.tab_widget = QTabWidget(self)
 
         widget_file = QWidget()
@@ -419,6 +426,7 @@ class InputArea(QWidget):
         self.tab_widget.setTabEnabled(0, text == "")
 
     def get_input_content(self) -> str:
+        self.last_input_error = ""
         file_path = self.textbox.text().strip()
         text_input = self.input_message.toPlainText().strip()
 
@@ -428,16 +436,24 @@ class InputArea(QWidget):
         if not file_path:
             return ""
 
-        if file_path.lower().endswith(".txt"):
+        supported_extensions = (".txt", ".pdf", ".doc", ".docx", ".ppt", ".pptx")
+        if file_path.lower().endswith(supported_extensions):
             try:
-                with open(file_path, "r", encoding="utf-8") as file:
-                    return file.read().strip()
-            except UnicodeDecodeError:
-                with open(file_path, "r", encoding="latin-1") as file:
-                    return file.read().strip()
+                return ExtractText(file_path).convert()
             except OSError:
+                self.last_input_error = "Could not open the selected file. Please verify the path and permissions."
+                return ""
+            except RuntimeError as error:
+                self.last_input_error = f"{error}\nPython: {sys.executable}"
+                return ""
+            except Exception:
+                self.last_input_error = (
+                    "Failed to extract text from the selected file. "
+                    "For PDF/DOCX/PPTX support, install: pymupdf python-docx python-pptx"
+                )
                 return ""
 
+        self.last_input_error = "Unsupported file type. Please use TXT, PDF, DOC/DOCX, or PPT/PPTX."
         return ""
 
     def load_saved_input(self, file_input: str, text_input: str):

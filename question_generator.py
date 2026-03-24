@@ -28,6 +28,27 @@ class QuestionGenerator:
                 "before", "during", "through", "and", "or", "but", "then", "than", "just", "very",
                 "there", "their", "every", "some", "many", "much", "one", "two", "three"
             }
+            self.low_value_answer_words = {
+                "everyone", "everything", "someone", "somebody", "anyone", "anybody", "nobody", "nothing",
+                "something", "anything", "least", "most", "said", "says", "say", "thing", "things",
+                "that", "this", "these", "those", "it", "its", "it's", "thats", "that's", "what",
+                "small", "large", "big", "dark", "light", "warm", "cold", "sat", "rest",
+                "who", "whom", "whose", "which", "where", "when", "why", "how"
+            }
+            self.common_verb_tokens = {
+                "is", "are", "was", "were", "be", "been", "being", "am",
+                "do", "does", "did", "has", "have", "had",
+                "go", "goes", "went", "gone", "come", "comes", "came",
+                "sit", "sits", "sat", "stand", "stands", "stood",
+                "look", "looks", "looked", "seem", "seems", "seemed",
+                "turn", "turns", "turned", "become", "becomes", "became",
+                "grow", "grows", "grew", "fall", "falls", "fell",
+            }
+            self.filipino_function_words = {
+                "ang", "ng", "sa", "mga", "si", "ni", "kay", "kina", "nang", "na", "at",
+                "pero", "dahil", "kung", "kapag", "habang", "para", "mula", "ito", "iyan", "iyon",
+                "isang", "isang", "may", "mga", "rin", "din", "pa", "lamang", "lang"
+            }
             self.semantic_pools = {
                 "time_of_day": ["morning", "afternoon", "evening", "night", "dawn", "noon", "midnight"],
                 "duration": ["minutes", "an hour", "hours", "a day", "days", "a week", "weeks", "long ago"],
@@ -35,6 +56,15 @@ class QuestionGenerator:
                 "number": ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
                 "direction": ["left", "right", "north", "south", "east", "west", "up", "down"],
                 "generic_noun": [],
+            }
+            self.entity_fallback_pools = {
+                "person": ["Don Pedro", "Don Juan", "Donya Maria", "Haring Salermo", "Prinsipe", "Prinsesa"],
+                "place": ["kaharian", "palasyo", "gubat", "ilog", "bundok", "nayon"],
+                "creature": ["ibon", "dragon", "kabayo", "lobo", "leon", "ahas"],
+                "title": ["Ibong Adarna", "Alamat", "Kuwento", "Panitikan", "Awit", "Epiko"],
+                "action": ["went silent", "turned pale", "fell asleep", "grew weak", "looked away", "stood still"],
+                "object": ["korona", "espada", "lampara", "teapot", "kahon", "aklat"],
+                "unknown": ["tauhan", "tagpuan", "pangyayari", "sagot", "detalye", "pahayag"],
             }
 
             print(f"✓ Model loaded successfully on {self.device}")
@@ -78,7 +108,13 @@ class QuestionGenerator:
                 if len(questions_data) >= target_count:
                     break
 
+                if not self._is_sentence_informative(sentence):
+                    continue
+
                 answers = self._extract_key_phrases(sentence)
+                best_entry = None
+                best_score = -10**9
+
                 for answer in answers:
                     if len(questions_data) >= target_count:
                         break
@@ -89,15 +125,25 @@ class QuestionGenerator:
 
                     question = self._generate_question_for_answer(sentence, answer)
                     if question:
-                        seen_pairs.add(pair_key)
-                        questions_data.append(
-                            {
+                        quality_score = self._score_question_candidate(question, answer, sentence)
+                        if quality_score > best_score:
+                            best_score = quality_score
+                            best_entry = {
+                                "pair_key": pair_key,
                                 "question": question,
                                 "answer": answer,
                                 "sentence": sentence,
                             }
-                        )
-                        break
+
+                if best_entry is not None:
+                    seen_pairs.add(best_entry["pair_key"])
+                    questions_data.append(
+                        {
+                            "question": best_entry["question"],
+                            "answer": best_entry["answer"],
+                            "sentence": best_entry["sentence"],
+                        }
+                    )
 
             if not questions_data:
                 return "Error: Could not generate questions from the text."
@@ -125,14 +171,8 @@ class QuestionGenerator:
             return []
 
         time_phrases = self._extract_time_phrases(sentence)
-
-        stop_words = {
-            "is", "are", "was", "were", "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-            "of", "with", "by", "from", "be", "been", "have", "has", "had", "do", "does", "did", "will",
-            "would", "could", "should", "may", "might", "must", "can", "it", "that", "this", "which", "who",
-            "what", "when", "where", "why", "how", "there", "their", "then", "than", "very", "just", "while",
-            "after", "before", "during", "since", "until", "every"
-        }
+        stop_words = self._get_stop_words()
+        phrase_candidates = self._extract_phrase_candidates(sentence, stop_words)
 
         proper_nouns = []
         for index, word in enumerate(words):
@@ -146,9 +186,6 @@ class QuestionGenerator:
             )
             if is_probable_proper_noun and index != 0 and self._is_valid_answer_candidate(cleaned_word):
                 proper_nouns.append(cleaned_word)
-
-        if proper_nouns:
-            return (time_phrases + proper_nouns)[:3]
 
         candidates = []
         for word in words:
@@ -164,7 +201,18 @@ class QuestionGenerator:
                 seen.add(lowered)
                 unique_candidates.append(candidate)
 
-        return (time_phrases + unique_candidates)[:3]
+        prioritized = time_phrases + phrase_candidates + proper_nouns + unique_candidates
+        ordered_unique = []
+        seen_all = set()
+        for candidate in prioritized:
+            lowered = candidate.lower()
+            if lowered in seen_all:
+                continue
+            seen_all.add(lowered)
+            ordered_unique.append(candidate)
+
+        ranked = sorted(ordered_unique, key=lambda candidate: self._score_answer_candidate(candidate, sentence), reverse=True)
+        return ranked[:5]
 
     def _generate_question_for_answer(self, sentence, answer):
         prompt = f"answer_token: {answer} context: {sentence}"
@@ -193,6 +241,9 @@ class QuestionGenerator:
             return None
 
         if answer.lower() in question.lower():
+            return None
+
+        if not self._is_question_quality_acceptable(question, answer, sentence):
             return None
 
         return question
@@ -286,7 +337,8 @@ class QuestionGenerator:
 
             if question_type == "essay":
                 formatted += f"{q_num}. {selected_item['question']}\n"
-                formatted += f"Context: {self._format_context(selected_item['sentence'])}\n\n"
+                formatted += "Note: Manual checking required.\n"
+                formatted += "\n"
                 q_num += 1
 
         return formatted
@@ -376,7 +428,7 @@ class QuestionGenerator:
         if not answer:
             return None
 
-        cleaned_answer = self._clean_token(answer)
+        cleaned_answer = self._clean_phrase(answer)
         if not cleaned_answer or not self._is_valid_answer_candidate(cleaned_answer):
             return None
 
@@ -479,17 +531,27 @@ class QuestionGenerator:
         return len(set(meaningful_changes))
 
     def _get_distractors(self, sentence, correct_answer, count=3):
+        stop_words = self._get_stop_words()
+        phrase_candidates = self._extract_phrase_candidates(sentence, stop_words)
         words = re.findall(r"[A-Za-z][A-Za-z'\-]*", sentence)
-        stop_words = {
-            "the", "a", "an", "is", "are", "was", "were", "be", "been", "and", "or", "but", "in", "on", "at",
-            "to", "for", "of", "with", "by", "from", "it", "that", "this", "which", "who", "there", "their",
-        }
 
         candidates = []
+        for phrase in phrase_candidates:
+            cleaned_phrase = self._clean_phrase(phrase)
+            if not cleaned_phrase:
+                continue
+            if self._is_overlapping_answer(cleaned_phrase, correct_answer):
+                continue
+            if not self._is_valid_answer_candidate(cleaned_phrase):
+                continue
+            candidates.append(cleaned_phrase)
+
         for word in words:
             cleaned = self._clean_token(word).lower()
             if cleaned not in stop_words and cleaned != correct_answer.lower() and len(cleaned) > 2:
-                candidates.append(self._clean_token(word))
+                candidate = self._clean_token(word)
+                if not self._is_overlapping_answer(candidate, correct_answer) and self._is_valid_answer_candidate(candidate):
+                    candidates.append(candidate)
 
         seen = set()
         unique = []
@@ -501,20 +563,36 @@ class QuestionGenerator:
         return unique[:count]
 
     def _build_multiple_choice_options(self, question_data):
-        correct_answer = self._clean_token(question_data["answer"])
+        correct_answer = self._clean_phrase(question_data["answer"])
+        if not correct_answer:
+            correct_answer = self._clean_token(question_data["answer"])
+        correct_token_count = self._token_count(correct_answer)
+
+        correct_category = self._infer_entity_category(correct_answer)
         semantic_distractors = self._get_semantic_distractors(correct_answer, 4)
-        context_distractors = self._get_distractors(question_data["sentence"], correct_answer, 8)
+        context_distractors = self._get_distractors(question_data["sentence"], correct_answer, 12)
         distractors = semantic_distractors + context_distractors
 
-        cleaned_distractors = []
+        same_category_distractors = []
+        other_distractors = []
         for distractor in distractors:
-            cleaned = self._clean_token(distractor)
-            if cleaned and cleaned.lower() != correct_answer.lower():
-                cleaned_distractors.append(cleaned)
+            cleaned = self._clean_phrase(distractor)
+            if not cleaned:
+                continue
+            if cleaned.lower() == correct_answer.lower() or self._is_overlapping_answer(cleaned, correct_answer):
+                continue
+
+            if correct_token_count >= 2 and self._token_count(cleaned) < 2:
+                continue
+
+            if self._is_same_category(correct_category, self._infer_entity_category(cleaned)):
+                same_category_distractors.append(cleaned)
+            else:
+                other_distractors.append(cleaned)
 
         unique_distractors = []
         seen = set()
-        for distractor in cleaned_distractors:
+        for distractor in same_category_distractors + other_distractors:
             lowered = distractor.lower()
             if lowered not in seen:
                 seen.add(lowered)
@@ -526,8 +604,28 @@ class QuestionGenerator:
             if len(unique_distractors) >= 3:
                 break
             if fallback_option.lower() != correct_answer.lower() and fallback_option.lower() not in seen:
+                if correct_token_count >= 2 and self._token_count(fallback_option) < 2:
+                    continue
                 seen.add(fallback_option.lower())
                 unique_distractors.append(fallback_option)
+
+        entity_fallbacks = self.entity_fallback_pools.get(correct_category, self.entity_fallback_pools["unknown"])
+        for fallback_option in entity_fallbacks:
+            if len(unique_distractors) >= 3:
+                break
+            cleaned_fallback = self._clean_phrase(fallback_option)
+            if not cleaned_fallback:
+                continue
+            if cleaned_fallback.lower() == correct_answer.lower():
+                continue
+            if cleaned_fallback.lower() in seen:
+                continue
+            if self._is_overlapping_answer(cleaned_fallback, correct_answer):
+                continue
+            if correct_token_count >= 2 and self._token_count(cleaned_fallback) < 2:
+                continue
+            seen.add(cleaned_fallback.lower())
+            unique_distractors.append(cleaned_fallback)
 
         options = [correct_answer] + unique_distractors[:3]
         while len(options) < 4:
@@ -536,8 +634,39 @@ class QuestionGenerator:
         self.random.shuffle(options)
         answer_index = options.index(correct_answer)
         answer_label = ["A", "B", "C", "D"][answer_index]
+        formatted_options = [self._format_option_text(option) for option in options]
 
-        return options, answer_label
+        return formatted_options, answer_label
+
+    def _extract_phrase_candidates(self, sentence, stop_words):
+        patterns = [
+            r"\b(?:si|ni|kay|kina)\s+([A-Z][A-Za-z'\-]*(?:\s+[A-Z][A-Za-z'\-]*){0,3})",
+            r"\b([A-Z]{2,}(?:\s+[A-Z]{2,}){1,4})\b",
+            r"\b([A-Z][A-Za-z'\-]*(?:\s+[A-Z][A-Za-z'\-]*){1,4})\b",
+            r"\b(?:a|an|the)\s+([A-Za-z][A-Za-z'\-]*\s+[A-Za-z][A-Za-z'\-]*)\b",
+            r"\b(?:ang|ng|sa|mga)\s+([A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*){1,3})",
+            r"\b((?:went|goes|go|turned|turns|became|becomes|grew|grow|fell|fall|looked|looks|seemed|seems)\s+[A-Za-z][A-Za-z'\-]*)\b",
+        ]
+
+        extracted = []
+        seen = set()
+        for pattern in patterns:
+            for match in re.finditer(pattern, sentence):
+                raw_phrase = match.group(1)
+                phrase = self._clean_phrase(raw_phrase)
+                lowered = phrase.lower()
+                if not phrase or lowered in seen:
+                    continue
+                if self._looks_like_bad_noun_phrase(phrase):
+                    continue
+                if self._is_mostly_stop_words(phrase, stop_words):
+                    continue
+                if not self._is_valid_answer_candidate(phrase):
+                    continue
+                seen.add(lowered)
+                extracted.append(phrase)
+
+        return extracted
 
     def _extract_time_phrases(self, sentence):
         patterns = [
@@ -559,13 +688,40 @@ class QuestionGenerator:
         return extracted
 
     def _is_valid_answer_candidate(self, candidate):
-        lowered = candidate.lower()
-        if lowered in self.weak_answer_words:
+        cleaned = self._clean_phrase(candidate)
+        lowered = cleaned.lower()
+        if not cleaned:
             return False
-        if len(lowered) <= 2:
-            return False
+
         if re.fullmatch(r"\d+", lowered):
             return False
+
+        tokens = re.findall(r"[A-Za-z0-9']+", lowered)
+        if not tokens:
+            return False
+
+        if len(tokens) == 1 and len(tokens[0]) <= 2:
+            return False
+
+        if len(tokens) == 1 and (
+            tokens[0] in self.weak_answer_words
+            or tokens[0] in self.filipino_function_words
+            or tokens[0] in self.low_value_answer_words
+        ):
+            return False
+
+        if len(tokens) == 1 and (tokens[0].endswith("'s") or tokens[0].endswith("’s")):
+            return False
+
+        stop_words = self._get_stop_words()
+        meaningful_tokens = [
+            token
+            for token in tokens
+            if token not in stop_words and token not in self.weak_answer_words and token not in self.low_value_answer_words
+        ]
+        if not meaningful_tokens:
+            return False
+
         return True
 
     def _infer_answer_type(self, answer):
@@ -588,6 +744,63 @@ class QuestionGenerator:
 
         return "generic_noun"
 
+    def _infer_entity_category(self, answer):
+        cleaned = self._clean_phrase(answer)
+        lowered = cleaned.lower()
+        tokens = re.findall(r"[A-Za-z0-9']+", cleaned)
+        if not tokens:
+            return "unknown"
+
+        answer_type = self._infer_answer_type(cleaned)
+        if answer_type in {"time_of_day", "duration", "frequency"}:
+            return "time"
+        if answer_type == "number":
+            return "number"
+        if answer_type == "direction":
+            return "direction"
+        if self._is_action_phrase(cleaned):
+            return "action"
+
+        person_markers = {"don", "dona", "doña", "mr", "mrs", "ms", "sir", "lady", "prince", "princess", "haring", "reyna"}
+        place_markers = {"kingdom", "kaharian", "city", "lungsod", "village", "nayon", "forest", "gubat", "mountain", "bundok", "river", "ilog", "palace", "palasyo", "island", "pulo"}
+        creature_markers = {"bird", "ibon", "dragon", "horse", "kabayo", "wolf", "lobo", "lion", "leon", "snake", "ahas", "adarna"}
+        title_markers = {"story", "kuwento", "alamat", "epiko", "awit", "book", "novel", "poem"}
+
+        if any(token in person_markers for token in re.findall(r"[A-Za-z']+", lowered)):
+            return "person"
+
+        if len(tokens) >= 2 and all(token and token[0].isupper() for token in cleaned.split() if token):
+            return "person"
+
+        if any(token in place_markers for token in re.findall(r"[A-Za-z']+", lowered)):
+            return "place"
+
+        if any(token in creature_markers for token in re.findall(r"[A-Za-z']+", lowered)):
+            return "creature"
+
+        if any(token in title_markers for token in re.findall(r"[A-Za-z']+", lowered)):
+            return "title"
+
+        if len(tokens) >= 2 and any(token and token[0].isupper() for token in cleaned.split()):
+            return "title"
+
+        return "object"
+
+    def _is_same_category(self, expected, candidate):
+        if expected == "unknown" or candidate == "unknown":
+            return True
+
+        if expected in {"time", "number", "direction", "person", "place", "creature", "action"}:
+            return expected == candidate
+
+        if expected == "title":
+            return candidate in {"title", "object"}
+
+        if expected == "object":
+            return candidate in {"object", "title"}
+
+        return expected == candidate
+
     def _get_semantic_distractors(self, correct_answer, count):
         answer_type = self._infer_answer_type(correct_answer)
         pool = self.semantic_pools.get(answer_type, [])
@@ -600,6 +813,183 @@ class QuestionGenerator:
         cleaned = self._normalize_text(token)
         cleaned = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$", "", cleaned)
         return cleaned
+
+    def _clean_phrase(self, phrase):
+        cleaned = self._normalize_text(phrase)
+        cleaned = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$", "", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        return cleaned.strip()
+
+    def _token_count(self, text):
+        return len(re.findall(r"[A-Za-z0-9']+", self._clean_phrase(text)))
+
+    def _is_action_phrase(self, text):
+        cleaned = self._clean_phrase(text).lower()
+        return bool(
+            re.search(
+                r"\b(?:went|goes|go|turned|turns|became|becomes|grew|grow|fell|fall|looked|looks|seemed|seems)\s+[a-z][a-z'\-]*\b",
+                cleaned,
+            )
+        )
+
+    def _looks_like_bad_noun_phrase(self, text):
+        cleaned = self._clean_phrase(text).lower()
+        tokens = re.findall(r"[A-Za-z0-9']+", cleaned)
+        if len(tokens) < 2:
+            return False
+
+        if self._is_action_phrase(cleaned):
+            return False
+
+        return tokens[-1] in self.common_verb_tokens
+
+    def _is_mostly_stop_words(self, text, stop_words):
+        tokens = re.findall(r"[A-Za-z0-9']+", text.lower())
+        if not tokens:
+            return True
+        meaningful = [token for token in tokens if token not in stop_words and token not in self.weak_answer_words]
+        return len(meaningful) == 0
+
+    def _is_overlapping_answer(self, candidate, answer):
+        candidate_clean = self._clean_phrase(candidate).lower()
+        answer_clean = self._clean_phrase(answer).lower()
+        if not candidate_clean or not answer_clean:
+            return False
+
+        if candidate_clean == answer_clean:
+            return True
+        if candidate_clean in answer_clean or answer_clean in candidate_clean:
+            return True
+
+        stop_words = self._get_stop_words()
+        candidate_tokens = {token for token in re.findall(r"[A-Za-z0-9']+", candidate_clean) if token not in stop_words}
+        answer_tokens = {token for token in re.findall(r"[A-Za-z0-9']+", answer_clean) if token not in stop_words}
+        if not candidate_tokens or not answer_tokens:
+            return False
+
+        overlap = candidate_tokens.intersection(answer_tokens)
+        if not overlap:
+            return False
+
+        overlap_ratio = len(overlap) / min(len(candidate_tokens), len(answer_tokens))
+        return overlap_ratio >= 0.8
+
+    def _format_option_text(self, text):
+        cleaned = self._clean_phrase(text)
+        if not cleaned:
+            return text
+
+        if re.fullmatch(r"[A-Z\s\-']+", cleaned) and len(cleaned) > 3:
+            return " ".join(part.capitalize() if part else part for part in cleaned.split(" "))
+
+        return cleaned
+
+    def _get_stop_words(self):
+        english_stop_words = {
+            "is", "are", "was", "were", "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "be", "been", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "must", "can", "it", "that", "this", "which", "who",
+            "what", "when", "where", "why", "how", "there", "their", "then", "than", "very", "just", "while",
+            "after", "before", "during", "since", "until", "every", "as", "into", "onto", "up", "down", "out",
+            "about"
+        }
+        return english_stop_words.union(self.filipino_function_words)
+
+    def _is_sentence_informative(self, sentence):
+        stop_words = self._get_stop_words()
+        tokens = [token for token in re.findall(r"[A-Za-z0-9']+", sentence.lower()) if token not in stop_words]
+        meaningful_tokens = [
+            token for token in tokens if token not in self.weak_answer_words and token not in self.low_value_answer_words
+        ]
+
+        if len(meaningful_tokens) < 5:
+            return False
+
+        phrase_candidates = self._extract_phrase_candidates(sentence, stop_words)
+        if phrase_candidates:
+            return True
+
+        if re.search(r"\b\d+\b", sentence):
+            return True
+
+        return len(meaningful_tokens) >= 7
+
+    def _score_answer_candidate(self, answer, sentence):
+        cleaned = self._clean_phrase(answer)
+        lowered = cleaned.lower()
+        tokens = re.findall(r"[A-Za-z0-9']+", cleaned)
+        if not tokens:
+            return -1000
+
+        score = 0
+        score += min(len(tokens), 4) * 2
+
+        if len(tokens) >= 2:
+            score += 3
+
+        if any(token and token[0].isupper() for token in cleaned.split()):
+            score += 2
+
+        entity_category = self._infer_entity_category(cleaned)
+        if entity_category in {"person", "place", "creature", "title"}:
+            score += 3
+        if entity_category == "action":
+            score += 4
+
+        if lowered in self.low_value_answer_words:
+            score -= 8
+
+        if len(tokens) == 1 and tokens[0] in self.weak_answer_words:
+            score -= 6
+
+        if lowered in sentence.lower():
+            score += 1
+
+        return score
+
+    def _score_question_candidate(self, question, answer, sentence):
+        question_tokens = re.findall(r"[A-Za-z0-9']+", question.lower())
+        answer_tokens = re.findall(r"[A-Za-z0-9']+", self._clean_phrase(answer).lower())
+        stop_words = self._get_stop_words()
+
+        score = 0
+        score += min(len(question_tokens), 12)
+        score += self._score_answer_candidate(answer, sentence)
+
+        if question.lower().startswith(("who", "what", "where", "when", "why", "how")):
+            score += 2
+
+        content_tokens = [token for token in question_tokens if token not in stop_words]
+        if len(content_tokens) < 4:
+            score -= 8
+
+        sentence_tokens = re.findall(r"[A-Za-z0-9']+", sentence.lower())
+        overlap_with_sentence = len(set(question_tokens).intersection(set(sentence_tokens)))
+        if overlap_with_sentence > max(8, len(question_tokens) * 0.8):
+            score -= 6
+
+        if answer_tokens and all(token in question_tokens for token in answer_tokens):
+            score -= 10
+
+        return score
+
+    def _is_question_quality_acceptable(self, question, answer, sentence):
+        lowered = question.lower().strip()
+        content_tokens = [token for token in re.findall(r"[A-Za-z0-9']+", lowered) if token not in self._get_stop_words()]
+
+        if len(content_tokens) < 4:
+            return False
+
+        if lowered.startswith("what did everyone"):
+            return False
+
+        if lowered.startswith("what is that") or lowered.startswith("what is this"):
+            return False
+
+        if self._score_question_candidate(question, answer, sentence) < 4:
+            return False
+
+        return True
 
     def _format_context(self, sentence):
         context = self._normalize_text(sentence)
