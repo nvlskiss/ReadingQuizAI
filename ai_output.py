@@ -133,7 +133,49 @@ class QuestionCard(QFrame):
             widget.setEnabled(False)
 
     def set_show_answers_mode(self):
+        self._select_correct_answer_option()
         self._answer_label.setVisible(bool(self._answer_label.text()))
+        for widget in self._answer_widgets:
+            widget.setEnabled(False)
+
+    def _select_correct_answer_option(self):
+        if self._button_group is None:
+            return
+
+        correct_answer = str(self.item.get("answer", "")).strip()
+        if not correct_answer:
+            return
+
+        normalized_answer = correct_answer.strip().lower()
+
+        if self.question_type == "true_or_false":
+            if normalized_answer == "tama":
+                normalized_answer = "true"
+            if normalized_answer == "mali":
+                normalized_answer = "false"
+
+            for button in self._button_group.buttons():
+                if button.text().strip().lower() == normalized_answer:
+                    button.setChecked(True)
+                    return
+            return
+
+        if self.question_type != "multiple_choice":
+            return
+
+        answer_label = correct_answer.strip().upper()
+        if len(answer_label) == 1 and answer_label in {"A", "B", "C", "D"}:
+            for button in self._button_group.buttons():
+                button_label = button.text().split(")", 1)[0].strip().upper()
+                if button_label == answer_label:
+                    button.setChecked(True)
+                    return
+            return
+
+        for button in self._button_group.buttons():
+            if button.text().strip().lower() == normalized_answer:
+                button.setChecked(True)
+                return
 
     def set_scoring_result(self, earned: int, total: int):
         if self.question_type not in {"multiple_choice", "true_or_false"}:
@@ -448,16 +490,24 @@ class OutputArea(QWidget):
             else:
                 question_text = question_line
 
+            lowered_question_text = question_text.lower()
+            legacy_tf_prefix = "true or false:"
+            if lowered_question_text.startswith(legacy_tf_prefix):
+                question_text = question_text[len(legacy_tf_prefix):].strip()
+
             choices = [line for line in lines if line.startswith(("A)", "B)", "C)", "D)"))]
             answer_line = ""
             for line in lines:
                 if line.lower().startswith("answer:"):
                     answer_line = line.split(":", 1)[1].strip()
 
+            normalized_answer = answer_line.strip().lower()
+            is_true_false_answer = normalized_answer in {"true", "false", "tama", "mali"}
+
             question_type = "essay"
             if choices:
                 question_type = "multiple_choice"
-            elif question_text.lower().startswith("true or false:"):
+            elif is_true_false_answer:
                 question_type = "true_or_false"
             elif answer_line:
                 question_type = "identification"

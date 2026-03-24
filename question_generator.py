@@ -33,7 +33,7 @@ class QuestionGenerator:
                 "something", "anything", "least", "most", "said", "says", "say", "thing", "things",
                 "that", "this", "these", "those", "it", "its", "it's", "thats", "that's", "what",
                 "small", "large", "big", "dark", "light", "warm", "cold", "sat", "rest",
-                "who", "whom", "whose", "which", "where", "when", "why", "how"
+                "who", "whom", "whose", "which", "where", "when", "why", "how", "pause", "paused"
             }
             self.common_verb_tokens = {
                 "is", "are", "was", "were", "be", "been", "being", "am",
@@ -42,7 +42,7 @@ class QuestionGenerator:
                 "sit", "sits", "sat", "stand", "stands", "stood",
                 "look", "looks", "looked", "seem", "seems", "seemed",
                 "turn", "turns", "turned", "become", "becomes", "became",
-                "grow", "grows", "grew", "fall", "falls", "fell",
+                "grow", "grows", "grew", "fall", "falls", "fell", "pause", "pauses", "paused",
             }
             self.filipino_function_words = {
                 "ang", "ng", "sa", "mga", "si", "ni", "kay", "kina", "nang", "na", "at",
@@ -58,13 +58,13 @@ class QuestionGenerator:
                 "generic_noun": [],
             }
             self.entity_fallback_pools = {
-                "person": ["Don Pedro", "Don Juan", "Donya Maria", "Haring Salermo", "Prinsipe", "Prinsesa"],
-                "place": ["kaharian", "palasyo", "gubat", "ilog", "bundok", "nayon"],
-                "creature": ["ibon", "dragon", "kabayo", "lobo", "leon", "ahas"],
-                "title": ["Ibong Adarna", "Alamat", "Kuwento", "Panitikan", "Awit", "Epiko"],
+                "person": ["the teacher", "the student", "the traveler", "the narrator", "the child", "the elder"],
+                "place": ["the house", "the village", "the town", "the road", "the market", "the garden"],
+                "creature": ["the bird", "the dog", "the cat", "the horse", "the wolf", "the lion"],
+                "title": ["the story", "the tale", "the legend", "the chapter", "the article", "the passage"],
                 "action": ["went silent", "turned pale", "fell asleep", "grew weak", "looked away", "stood still"],
-                "object": ["korona", "espada", "lampara", "teapot", "kahon", "aklat"],
-                "unknown": ["tauhan", "tagpuan", "pangyayari", "sagot", "detalye", "pahayag"],
+                "object": ["the lamp", "the key", "the box", "the letter", "the ring", "the book"],
+                "unknown": ["another detail", "another event", "another reason", "another object", "another place", "another person"],
             }
 
             print(f"✓ Model loaded successfully on {self.device}")
@@ -112,8 +112,7 @@ class QuestionGenerator:
                     continue
 
                 answers = self._extract_key_phrases(sentence)
-                best_entry = None
-                best_score = -10**9
+                scored_entries = []
 
                 for answer in answers:
                     if len(questions_data) >= target_count:
@@ -126,22 +125,34 @@ class QuestionGenerator:
                     question = self._generate_question_for_answer(sentence, answer)
                     if question:
                         quality_score = self._score_question_candidate(question, answer, sentence)
-                        if quality_score > best_score:
-                            best_score = quality_score
-                            best_entry = {
+                        scored_entries.append(
+                            {
                                 "pair_key": pair_key,
                                 "question": question,
                                 "answer": answer,
                                 "sentence": sentence,
+                                "score": quality_score,
                             }
+                        )
 
-                if best_entry is not None:
-                    seen_pairs.add(best_entry["pair_key"])
+                if not scored_entries:
+                    continue
+
+                scored_entries.sort(key=lambda item: item["score"], reverse=True)
+                max_from_sentence = min(3, target_count - len(questions_data))
+
+                for entry in scored_entries[:max_from_sentence]:
+                    if len(questions_data) >= target_count:
+                        break
+                    if entry["pair_key"] in seen_pairs:
+                        continue
+
+                    seen_pairs.add(entry["pair_key"])
                     questions_data.append(
                         {
-                            "question": best_entry["question"],
-                            "answer": best_entry["answer"],
-                            "sentence": best_entry["sentence"],
+                            "question": entry["question"],
+                            "answer": entry["answer"],
+                            "sentence": entry["sentence"],
                         }
                     )
 
@@ -215,19 +226,25 @@ class QuestionGenerator:
         return ranked[:5]
 
     def _generate_question_for_answer(self, sentence, answer):
-        prompt = f"answer_token: {answer} context: {sentence}"
+        prompt = f"answer: {answer} context: {sentence} </s>"
 
-        inputs = self.tokenizer.encode(prompt, return_tensors="pt", max_length=256, truncation=True)
-        inputs = inputs.to(self.device)
+        encoded_inputs = self.tokenizer(
+            prompt,
+            return_tensors="pt",
+            max_length=256,
+            truncation=True,
+        )
+        input_ids = encoded_inputs["input_ids"].to(self.device)
+        attention_mask = encoded_inputs["attention_mask"].to(self.device)
 
         with torch.no_grad():
             outputs = self.model.generate(
-                inputs,
-                max_length=100,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_length=96,
                 num_beams=4,
-                temperature=0.7,
-                do_sample=True,
-                top_p=0.9,
+                do_sample=False,
+                early_stopping=True,
             )
 
         question = self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
@@ -252,7 +269,6 @@ class QuestionGenerator:
         formatted = ""
         q_num = 1
         tf_created = 0
-        used_contexts = set()
         used_question_texts = set()
         used_tf_statements = set()
 
@@ -272,10 +288,6 @@ class QuestionGenerator:
             selected_statement_key = None
 
             for index, question_data in enumerate(question_pool):
-                context_key = self._normalize_text(question_data["sentence"]).lower()
-                if context_key in used_contexts:
-                    continue
-
                 normalized_question = question_data["question"].strip().lower()
                 if normalized_question in used_question_texts:
                     continue
@@ -302,13 +314,17 @@ class QuestionGenerator:
 
             question_pool.pop(selected_index)
 
-            context_key = self._normalize_text(selected_item["sentence"]).lower()
             normalized_question = selected_item["question"].strip().lower()
-            used_contexts.add(context_key)
             used_question_texts.add(normalized_question)
 
             if question_type == "multiple_choice":
                 options, answer_label = self._build_multiple_choice_options(selected_item)
+                if not options or not answer_label:
+                    formatted += f"{q_num}. {selected_item['question']}\n"
+                    formatted += f"Answer: {selected_item['answer']}\n"
+                    formatted += f"Context: {self._format_context(selected_item['sentence'])}\n\n"
+                    q_num += 1
+                    continue
                 formatted += f"{q_num}. {selected_item['question']}\n"
                 formatted += f"A) {options[0]}\n"
                 formatted += f"B) {options[1]}\n"
@@ -321,7 +337,7 @@ class QuestionGenerator:
 
             if question_type == "true_or_false":
                 used_tf_statements.add(selected_statement_key)
-                formatted += f"{q_num}. True or False: {selected_statement}\n"
+                formatted += f"{q_num}. {selected_statement}\n"
                 formatted += f"Answer: {selected_tf_answer}\n"
                 formatted += f"Context: {self._format_context(selected_item['sentence'])}\n\n"
                 q_num += 1
@@ -627,9 +643,31 @@ class QuestionGenerator:
             seen.add(cleaned_fallback.lower())
             unique_distractors.append(cleaned_fallback)
 
+        if len(unique_distractors) < 3:
+            question_words = re.findall(r"[A-Za-z][A-Za-z'\-]*", question_data.get("question", ""))
+            stop_words = self._get_stop_words()
+            for word in question_words:
+                if len(unique_distractors) >= 3:
+                    break
+                cleaned_word = self._clean_token(word)
+                lowered_word = cleaned_word.lower()
+                if len(cleaned_word) < 4:
+                    continue
+                if lowered_word in stop_words or lowered_word in seen:
+                    continue
+                if lowered_word == correct_answer.lower() or self._is_overlapping_answer(cleaned_word, correct_answer):
+                    continue
+                if correct_token_count >= 2 and self._token_count(cleaned_word) < 2:
+                    continue
+                if not self._is_valid_answer_candidate(cleaned_word):
+                    continue
+                seen.add(lowered_word)
+                unique_distractors.append(cleaned_word)
+
+        if len(unique_distractors) < 3:
+            return None, None
+
         options = [correct_answer] + unique_distractors[:3]
-        while len(options) < 4:
-            options.append(f"Option {len(options) + 1}")
 
         self.random.shuffle(options)
         answer_index = options.index(correct_answer)
@@ -837,6 +875,16 @@ class QuestionGenerator:
         tokens = re.findall(r"[A-Za-z0-9']+", cleaned)
         if len(tokens) < 2:
             return False
+
+        title_markers = {"story", "tale", "legend", "book", "chapter", "article", "passage", "kuwento", "alamat", "epiko"}
+        if tokens[0] in title_markers:
+            second_token = tokens[1]
+            if (
+                second_token in self.common_verb_tokens
+                or second_token.endswith("ed")
+                or second_token.endswith("ing")
+            ):
+                return True
 
         if self._is_action_phrase(cleaned):
             return False

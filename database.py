@@ -566,6 +566,12 @@ class NotebookDatabase:
                     choices = []
 
             question_type = row["question_type"]
+            question_text = row["content"]
+            if question_type == "true_or_false":
+                lowered_question_text = (question_text or "").strip().lower()
+                legacy_tf_prefix = "true or false:"
+                if lowered_question_text.startswith(legacy_tf_prefix):
+                    question_text = question_text[len(legacy_tf_prefix):].strip()
             answer_value = row["quiz_question_answer_correct"] or ""
             context_value = context
             if question_type == "essay":
@@ -575,7 +581,7 @@ class NotebookDatabase:
             questions.append(
                 {
                     "question_type": question_type,
-                    "question": row["content"],
+                    "question": question_text,
                     "choices": choices,
                     "answer": answer_value,
                     "context": context_value,
@@ -599,6 +605,11 @@ class NotebookDatabase:
             else:
                 question_text = question_line
 
+            lowered_question_text = question_text.lower()
+            legacy_tf_prefix = "true or false:"
+            if lowered_question_text.startswith(legacy_tf_prefix):
+                question_text = question_text[len(legacy_tf_prefix):].strip()
+
             choices = [line for line in lines if line.startswith(("A)", "B)", "C)", "D)"))]
             answer_line = ""
             context_line = ""
@@ -608,10 +619,13 @@ class NotebookDatabase:
                 if line.lower().startswith("context:"):
                     context_line = line.split(":", 1)[1].strip()
 
+            normalized_answer = answer_line.strip().lower()
+            is_true_false_answer = normalized_answer in {"true", "false", "tama", "mali"}
+
             question_type = "essay"
             if choices:
                 question_type = "multiple_choice"
-            elif question_text.lower().startswith("true or false:"):
+            elif is_true_false_answer:
                 question_type = "true_or_false"
             elif answer_line:
                 question_type = "identification"
