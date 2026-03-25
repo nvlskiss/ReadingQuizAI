@@ -59,6 +59,7 @@ if __name__ == "__main__":
                 question_types,
                 quantities,
                 payload.get("language", "English"),
+                use_story_compression=True,
             )
             output_area.set_output_text(generated_output)
         except Exception as error:

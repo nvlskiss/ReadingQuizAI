@@ -77,6 +77,8 @@ class QuestionGenerator:
                 "object": ["the lamp", "the key", "the box", "the letter", "the ring", "the book"],
                 "unknown": ["another detail", "another event", "another reason", "another object", "another place", "another person"],
             }
+            self.story_compression_enabled = True
+            self.allowed_question_starters = {"who", "what", "where", "when", "why", "how", "which"}
 
             print(f"✓ Model loaded successfully on {self.device}")
         except Exception as error:
@@ -104,11 +106,15 @@ class QuestionGenerator:
 
         return self.base_model_name
 
-    def generate_questions(self, text, question_types, quantities, language="English"):
+    def generate_questions(self, text, question_types, quantities, language="English", use_story_compression=None):
         try:
             text = self._normalize_text(text)
             if len(text) > 1000:
                 text = text[:1000]
+
+            compression_enabled = self.story_compression_enabled if use_story_compression is None else bool(use_story_compression)
+            if compression_enabled:
+                text = self._compress_story_for_qg(text)
 
             language_normalized = self._normalize_text(language).lower()
             is_filipino_mode = language_normalized == "filipino"
@@ -203,6 +209,72 @@ class QuestionGenerator:
                 cleaned_sentences.append(cleaned)
         return cleaned_sentences
 
+    def _compress_story_for_qg(self, text, min_sentences=8, max_sentences=14):
+        normalized_text = self._normalize_text(text)
+        if not normalized_text:
+            return text
+
+        sentences = self._split_sentences(normalized_text)
+        if len(sentences) <= min_sentences + 2:
+            return normalized_text
+
+        target_count = max(min_sentences, int(round(len(sentences) * 0.65)))
+        target_count = min(target_count, max_sentences, len(sentences))
+
+        scored = []
+        for index, sentence in enumerate(sentences):
+            score = self._score_sentence_for_qg(sentence)
+            scored.append((score, index, sentence))
+
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        selected = scored[:target_count]
+        selected.sort(key=lambda item: item[1])
+
+        compressed_sentences = [item[2] for item in selected if item[2].strip()]
+        compressed_text = self._normalize_text(". ".join(compressed_sentences))
+        if compressed_text and not compressed_text.endswith(('.', '!', '?')):
+            compressed_text += "."
+
+        if not compressed_text:
+            return normalized_text
+
+        if len(compressed_text) < int(len(normalized_text) * 0.45):
+            return normalized_text
+
+        return compressed_text
+
+    def _score_sentence_for_qg(self, sentence):
+        cleaned_sentence = self._normalize_text(sentence)
+        if not cleaned_sentence:
+            return 0.0
+
+        tokens = re.findall(r"[A-Za-z][A-Za-z'\-]*", cleaned_sentence)
+        token_count = len(tokens)
+        if token_count < 5:
+            return 0.0
+
+        unique_tokens = len({token.lower() for token in tokens})
+        proper_noun_count = len([token for token in tokens if token[:1].isupper()])
+        has_number = bool(re.search(r"\b\d+\b", cleaned_sentence))
+        has_connector = bool(re.search(r"\b(because|therefore|however|after|before|when|while|since|so)\b", cleaned_sentence, flags=re.IGNORECASE))
+        has_quote = '"' in cleaned_sentence or "'" in cleaned_sentence
+
+        score = 0.0
+        score += min(token_count / 14.0, 1.4)
+        score += min(unique_tokens / 10.0, 1.2)
+        score += min(proper_noun_count * 0.35, 1.4)
+        if has_number:
+            score += 0.5
+        if has_connector:
+            score += 0.5
+        if has_quote:
+            score += 0.25
+
+        if cleaned_sentence.endswith("?"):
+            score -= 0.3
+
+        return score
+
     def _extract_key_phrases(self, sentence):
         words = re.findall(r"[A-Za-z][A-Za-z'\-]*", sentence)
         if not words:
@@ -277,6 +349,7 @@ class QuestionGenerator:
         question = self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
         question = re.sub(r"^question:\s*", "", question, flags=re.IGNORECASE)
         question = self._normalize_text(question)
+        question = self._normalize_question_starter(question, sentence, answer)
 
         if not question.endswith("?"):
             question = f"{question}?"
@@ -379,12 +452,34 @@ class QuestionGenerator:
                 continue
 
             if question_type == "essay":
-                formatted += f"{q_num}. {selected_item['question']}\n"
+                essay_prompt = self._build_essay_prompt(selected_item)
+                formatted += f"{q_num}. {essay_prompt}\n"
                 formatted += "Note: Manual checking required.\n"
                 formatted += "\n"
                 q_num += 1
 
         return formatted
+
+    def _build_essay_prompt(self, question_data):
+        original_question = self._normalize_text(question_data.get("question", ""))
+        sentence = self._normalize_text(question_data.get("sentence", ""))
+        intent = self._get_question_intent(original_question)
+
+        if sentence and not sentence.endswith((".", "!", "?")):
+            sentence += "."
+
+        if intent in {"why", "how"} and original_question:
+            return f"Explain your answer in 3-5 sentences: {original_question}"
+
+        if intent in {"who", "where", "when", "which", "how_many", "what"}:
+            if sentence:
+                return f"Using details from the story, discuss this part: {sentence} Why is it important?"
+            return "Using details from the story, explain this event in 3-5 sentences."
+
+        if original_question:
+            return f"Answer in 3-5 sentences using evidence from the story: {original_question}"
+
+        return "Write a 3-5 sentence explanation using details from the story."
 
     def _ensure_translation_resources(self, direction):
         if direction in self.translation_resources:
@@ -861,7 +956,138 @@ class QuestionGenerator:
         answer_label = ["A", "B", "C", "D"][answer_index]
         formatted_options = [self._format_option_text(option) for option in options]
 
+        question_intent = self._get_question_intent(question_data.get("question", ""))
+        if question_intent in {"what", "why", "how", "which"}:
+            formatted_options = [
+                self._build_sentence_option_from_starter(option, question_intent)
+                for option in formatted_options
+            ]
+
         return formatted_options, answer_label
+
+    def _get_question_starter(self, question):
+        lowered = self._normalize_text(question).lower().strip()
+        if not lowered:
+            return ""
+        first_word = lowered.split(" ", 1)[0]
+        return first_word.rstrip("?:!.,")
+
+    def _get_question_intent(self, question):
+        lowered = self._normalize_text(question).lower().strip()
+        if not lowered:
+            return ""
+
+        if lowered.startswith("how many "):
+            return "how_many"
+
+        preposition_wh_match = re.match(
+            r"^(on|in|at|to|from|by|for|with|under|over|inside|outside|near)\s+(who|what|where|when|why|how|which)\b",
+            lowered,
+        )
+        if preposition_wh_match:
+            return preposition_wh_match.group(2)
+
+        return self._get_question_starter(lowered)
+
+    def _normalize_question_starter(self, question, sentence, answer):
+        cleaned_question = self._normalize_text(question)
+        if not cleaned_question:
+            preferred = self._infer_preferred_question_starter(sentence, answer)
+            return f"{preferred.capitalize()} is the best answer based on the story"
+
+        starter = self._get_question_starter(cleaned_question)
+        intent = self._get_question_intent(cleaned_question)
+
+        if intent == "how_many" and not self._is_quantity_answer(answer):
+            starter = ""
+
+        if intent in self.allowed_question_starters and not self._has_redundant_wh_lead(cleaned_question):
+            return cleaned_question
+
+        if starter in self.allowed_question_starters and not self._has_redundant_wh_lead(cleaned_question):
+            return cleaned_question
+
+        preferred = self._infer_preferred_question_starter(sentence, answer)
+        body = self._strip_leading_question_words(cleaned_question)
+        if not body:
+            body = "is the best answer based on the story"
+
+        rewritten = f"{preferred.capitalize()} {body}"
+        rewritten = self._normalize_text(rewritten)
+        return rewritten
+
+    def _has_redundant_wh_lead(self, question):
+        lowered = self._normalize_text(question).lower()
+        if re.match(r"^(who|what|where|when|why|how|which)\s+(who|what|where|when|why|how|which)\b", lowered):
+            return True
+        if re.match(r"^how\s+many\s+(who|what|where|when|why|how|which)\b", lowered):
+            return True
+        return False
+
+    def _strip_leading_question_words(self, question):
+        cleaned = self._normalize_text(question)
+        if not cleaned:
+            return ""
+
+        body = re.sub(r"^how\s+many\s+", "", cleaned, flags=re.IGNORECASE)
+        body = re.sub(r"^(who|what|where|when|why|how|which)\s+", "", body, flags=re.IGNORECASE)
+        body = re.sub(r"^(who|what|where|when|why|how|which)\s+", "", body, flags=re.IGNORECASE)
+        return self._normalize_text(body)
+
+    def _infer_preferred_question_starter(self, sentence, answer):
+        category = self._infer_entity_category(answer)
+        lowered_sentence = sentence.lower()
+
+        if category == "person":
+            return "who"
+        if category == "place":
+            return "where"
+        if category == "time":
+            return "when"
+        if category == "number":
+            return "how many"
+        if "because" in lowered_sentence or "reason" in lowered_sentence:
+            return "why"
+        if re.search(r"\b(by|through|using|via)\b", lowered_sentence):
+            return "how"
+        if category in {"title", "object"} and self._token_count(answer) >= 2:
+            return "which"
+        return "what"
+
+    def _build_sentence_option_from_starter(self, option_text, starter):
+        option = self._format_option_text(option_text)
+        if not option:
+            return option_text
+
+        if re.search(r"[.!?]$", option):
+            return option
+
+        first_char = option[:1]
+        if first_char.isalpha():
+            option = first_char.lower() + option[1:]
+
+        if starter == "why":
+            return f"It happened because {option}."
+        if starter == "how":
+            return f"It happened through {option}."
+        if starter == "which":
+            return f"The best choice is {option}."
+        return f"It was {option}."
+
+    def _is_quantity_answer(self, answer_text):
+        cleaned = self._clean_phrase(answer_text).lower()
+        if not cleaned:
+            return False
+
+        if re.search(r"\b\d+\b", cleaned):
+            return True
+
+        number_tokens = {
+            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+            "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+        }
+        tokens = set(re.findall(r"[A-Za-z]+", cleaned))
+        return any(token in number_tokens for token in tokens)
 
     def _extract_phrase_candidates(self, sentence, stop_words):
         patterns = [
@@ -1186,12 +1412,13 @@ class QuestionGenerator:
         question_tokens = re.findall(r"[A-Za-z0-9']+", question.lower())
         answer_tokens = re.findall(r"[A-Za-z0-9']+", self._clean_phrase(answer).lower())
         stop_words = self._get_stop_words()
+        question_intent = self._get_question_intent(question)
 
         score = 0
         score += min(len(question_tokens), 12)
         score += self._score_answer_candidate(answer, sentence)
 
-        if question.lower().startswith(("who", "what", "where", "when", "why", "how")):
+        if question_intent in self.allowed_question_starters or question_intent == "how_many":
             score += 2
 
         content_tokens = [token for token in question_tokens if token not in stop_words]
@@ -1210,7 +1437,18 @@ class QuestionGenerator:
 
     def _is_question_quality_acceptable(self, question, answer, sentence):
         lowered = question.lower().strip()
+        starter = self._get_question_starter(lowered)
+        question_intent = self._get_question_intent(lowered)
         content_tokens = [token for token in re.findall(r"[A-Za-z0-9']+", lowered) if token not in self._get_stop_words()]
+
+        if starter not in self.allowed_question_starters and question_intent not in self.allowed_question_starters and question_intent != "how_many":
+            return False
+
+        if self._has_redundant_wh_lead(lowered):
+            return False
+
+        if lowered.startswith("how many") and not self._is_quantity_answer(answer):
+            return False
 
         if len(content_tokens) < 4:
             return False
