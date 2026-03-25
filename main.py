@@ -105,6 +105,7 @@ if __name__ == "__main__":
                 selected_notebook_id["value"] = notebook_id
                 output_area.load_sets(data.get("sets", []))
                 output_area.set_active_set(set_name)
+                sidebar_notebook.set_new_notebook_mode(False, notebook_name)
 
             QMessageBox.information(notebook, "Saved", f"{set_name} saved to notebook '{notebook_name}'.")
         except Exception as error:
@@ -131,6 +132,19 @@ if __name__ == "__main__":
         selected_notebook_id["value"] = notebook_id
         output_area.load_sets(data["sets"])
         question_setting.set_from_saved_settings(data["sets"][0]["settings"])
+        sidebar_notebook.set_new_notebook_mode(False, data.get("notebook_name", ""))
+
+    def handle_new_notebook_requested():
+        selected_notebook_id["value"] = None
+        output_area.clear_sets()
+        output_area.add_set("Set 1", "")
+        question_setting.reset_to_defaults()
+        sidebar_notebook.set_new_notebook_mode(True)
+        QMessageBox.information(
+            notebook,
+            "New Notebook",
+            "Workspace reset for a new notebook. Saved notebooks were not changed.",
+        )
 
     def handle_output_set_changed(set_payload):
         settings = set_payload.get("settings", {})
@@ -219,6 +233,8 @@ if __name__ == "__main__":
             selected_notebook_id["value"] = None
             output_area.clear_sets()
             output_area.add_set("Set 1", "")
+            question_setting.reset_to_defaults()
+            sidebar_notebook.set_new_notebook_mode(True)
         QMessageBox.information(notebook, "Deleted", "Notebook deleted successfully.")
 
     def handle_notebook_rename(notebook_id):
@@ -245,6 +261,7 @@ if __name__ == "__main__":
     output_area.set_changed.connect(handle_output_set_changed)
     output_area.set_delete_requested.connect(handle_output_set_delete)
     sidebar_notebook.notebook_selected.connect(handle_notebook_selected)
+    sidebar_notebook.notebook_new_requested.connect(handle_new_notebook_requested)
     sidebar_notebook.notebook_delete_requested.connect(handle_notebook_delete)
     sidebar_notebook.notebook_rename_requested.connect(handle_notebook_rename)
 

@@ -1,4 +1,4 @@
-from transformers import T5Tokenizer, T5ForConditionalGeneration
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer
 import torch
 import re
 import random
@@ -11,6 +11,17 @@ class QuestionGenerator:
         self.base_model_name = "mrm8488/t5-base-finetuned-question-generation-ap"
         self.local_model_dir = os.getenv("READINGQUIZ_MODEL_DIR", "models/qg_verify_full")
         self.model_name = self._resolve_model_source()
+        self.translation_model_names = {
+            "tl_en": "Helsinki-NLP/opus-mt-tl-en",
+            "en_tl": "Helsinki-NLP/opus-mt-en-tl",
+        }
+        self.translation_resources = {}
+        self.translation_cache = {}
+        self.filipino_spelling_corrections = {
+            "naggibigay": "nagbibigay",
+            "nagbibgy": "nagbibigay",
+            "iervesptop": "river stop",
+        }
 
         print("Loading fine-tuned T5 model...")
         print(f"Model source: {self.model_name}")
@@ -99,7 +110,20 @@ class QuestionGenerator:
             if len(text) > 1000:
                 text = text[:1000]
 
-            sentences = self._split_sentences(text)
+            language_normalized = self._normalize_text(language).lower()
+            is_filipino_mode = language_normalized == "filipino"
+
+            if is_filipino_mode:
+                original_sentences = self._split_sentences(text)
+                translated_sentences = []
+                for sentence in original_sentences:
+                    translated_sentence = self._translate_text(sentence, "tl_en")
+                    translated_sentence = self._normalize_text(translated_sentence)
+                    if len(translated_sentence) > 20:
+                        translated_sentences.append(translated_sentence)
+                sentences = translated_sentences or self._split_sentences(text)
+            else:
+                sentences = self._split_sentences(text)
             questions_data = []
             seen_pairs = set()
             target_count = sum(quantities.values())
@@ -159,7 +183,10 @@ class QuestionGenerator:
             if not questions_data:
                 return "Error: Could not generate questions from the text."
 
-            return self._format_by_type(questions_data, quantities)
+            formatted_output = self._format_by_type(questions_data, quantities)
+            if is_filipino_mode:
+                formatted_output = self._translate_formatted_output_to_filipino(formatted_output)
+            return formatted_output
 
         except Exception as error:
             print(f"Error: {error}")
@@ -358,6 +385,166 @@ class QuestionGenerator:
                 q_num += 1
 
         return formatted
+
+    def _ensure_translation_resources(self, direction):
+        if direction in self.translation_resources:
+            return self.translation_resources[direction]
+
+        model_name = self.translation_model_names[direction]
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        model.to(self.device)
+        self.translation_resources[direction] = (tokenizer, model)
+        return tokenizer, model
+
+    def _translate_text(self, text, direction):
+        cleaned_text = self._normalize_text(text)
+        if not cleaned_text:
+            return ""
+
+        cache_key = (direction, cleaned_text)
+        cached_value = self.translation_cache.get(cache_key)
+        if cached_value is not None:
+            return cached_value
+
+        try:
+            tokenizer, model = self._ensure_translation_resources(direction)
+            encoded = tokenizer(
+                cleaned_text,
+                return_tensors="pt",
+                max_length=512,
+                truncation=True,
+            )
+            input_ids = encoded["input_ids"].to(self.device)
+            attention_mask = encoded["attention_mask"].to(self.device)
+
+            with torch.no_grad():
+                generated = model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_length=256,
+                    num_beams=4,
+                    do_sample=False,
+                    early_stopping=True,
+                )
+
+            translated = tokenizer.decode(generated[0], skip_special_tokens=True).strip()
+            normalized_translated = self._normalize_text(translated)
+            self.translation_cache[cache_key] = normalized_translated
+            return normalized_translated
+        except Exception as error:
+            print(f"Translation warning ({direction}): {error}")
+            self.translation_cache[cache_key] = cleaned_text
+            return cleaned_text
+
+    def _split_translation_chunks(self, text, max_chars=260):
+        segments = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", text) if segment.strip()]
+        if not segments:
+            return [text] if text else []
+
+        chunks = []
+        current_chunk = ""
+
+        for segment in segments:
+            proposed = f"{current_chunk} {segment}".strip() if current_chunk else segment
+            if len(proposed) <= max_chars:
+                current_chunk = proposed
+                continue
+
+            if current_chunk:
+                chunks.append(current_chunk)
+            current_chunk = segment
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks
+
+    def _translate_long_text(self, text, direction):
+        normalized_text = self._normalize_text(text)
+        if not normalized_text:
+            return ""
+
+        chunks = self._split_translation_chunks(normalized_text)
+        translated_chunks = [self._translate_text(chunk, direction) for chunk in chunks]
+        translated_chunks = [chunk for chunk in translated_chunks if chunk]
+        translated_text = self._normalize_text(" ".join(translated_chunks))
+        if direction == "en_tl":
+            return self._normalize_filipino_spelling(translated_text)
+        return translated_text
+
+    def _translate_formatted_output_to_filipino(self, formatted_output):
+        if not formatted_output.strip():
+            return formatted_output
+
+        translated_lines = []
+        for line in formatted_output.splitlines():
+            stripped_line = line.strip()
+            if not stripped_line:
+                translated_lines.append("")
+                continue
+
+            question_match = re.match(r"^(\d+\.\s+)(.+)$", stripped_line)
+            if question_match:
+                translated_question = self._translate_text(question_match.group(2), "en_tl")
+                translated_question = self._normalize_filipino_spelling(translated_question)
+                translated_lines.append(f"{question_match.group(1)}{translated_question}")
+                continue
+
+            choice_match = re.match(r"^([A-D]\)\s+)(.+)$", stripped_line)
+            if choice_match:
+                translated_choice = self._translate_text(choice_match.group(2), "en_tl")
+                translated_choice = self._normalize_filipino_spelling(translated_choice)
+                translated_lines.append(f"{choice_match.group(1)}{translated_choice}")
+                continue
+
+            if stripped_line.startswith("Context:"):
+                context_value = stripped_line.split(":", 1)[1].strip()
+                translated_context = self._translate_text(context_value, "en_tl")
+                translated_context = self._normalize_filipino_spelling(translated_context)
+                translated_lines.append(f"Context: {translated_context}")
+                continue
+
+            if stripped_line.startswith("Answer:"):
+                answer_value = stripped_line.split(":", 1)[1].strip()
+                answer_upper = answer_value.upper()
+                answer_lower = answer_value.lower()
+
+                if len(answer_upper) == 1 and answer_upper in {"A", "B", "C", "D"}:
+                    translated_lines.append(f"Answer: {answer_upper}")
+                    continue
+
+                if answer_lower in {"true", "false"}:
+                    translated_lines.append(f"Answer: {answer_value.title()}")
+                    continue
+
+                translated_answer = self._translate_text(answer_value, "en_tl")
+                translated_answer = self._normalize_filipino_spelling(translated_answer)
+                translated_lines.append(f"Answer: {translated_answer}")
+                continue
+
+            if stripped_line.lower() == "note: manual checking required.":
+                translated_lines.append("Note: Kailangan ng manwal na pag-check.")
+                continue
+
+            translated_line = self._translate_text(stripped_line, "en_tl")
+            translated_lines.append(self._normalize_filipino_spelling(translated_line))
+
+        return "\n".join(translated_lines)
+
+    def _normalize_filipino_spelling(self, text):
+        normalized_text = self._normalize_text(text)
+        if not normalized_text:
+            return ""
+
+        corrected_text = normalized_text
+        for wrong_word, corrected_word in self.filipino_spelling_corrections.items():
+            pattern = rf"\b{re.escape(wrong_word)}\b"
+            corrected_text = re.sub(pattern, corrected_word, corrected_text, flags=re.IGNORECASE)
+
+        corrected_text = re.sub(r"\s+-\s+", " - ", corrected_text)
+        corrected_text = re.sub(r"\s+", " ", corrected_text).strip()
+        return corrected_text
 
     def _build_true_false_item(self, question_data, index):
         statement = question_data["sentence"].strip()

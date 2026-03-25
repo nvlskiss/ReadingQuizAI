@@ -145,6 +145,27 @@ class QuestionSetting(QWidget):
         self.filipino.setChecked(language == "Filipino")
         self.language_chosen = language
 
+    def reset_to_defaults(self):
+        self.input_area.reset_inputs()
+
+        self.multiple_choice.setChecked(False)
+        self.true_or_false.setChecked(False)
+        self.identification.setChecked(False)
+        self.essay.setChecked(False)
+
+        self.multiple_choice_spinbox.setValue(0)
+        self.true_or_false_spinbox.setValue(0)
+        self.identification_spinbox.setValue(0)
+        self.essay_spinbox.setValue(0)
+
+        self.english.setAutoExclusive(False)
+        self.filipino.setAutoExclusive(False)
+        self.english.setChecked(False)
+        self.filipino.setChecked(False)
+        self.english.setAutoExclusive(True)
+        self.filipino.setAutoExclusive(True)
+        self.language_chosen = ""
+
     def ask_notebook_name(self) -> str:
         notebook_name, ok = QInputDialog.getText(self, "Save Notebook", "Notebook name:")
         if not ok:
@@ -278,6 +299,7 @@ class SideBarNotebook(QWidget):
     notebook_selected = Signal(int)
     notebook_delete_requested = Signal(int)
     notebook_rename_requested = Signal(int)
+    notebook_new_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -287,6 +309,14 @@ class SideBarNotebook(QWidget):
         notebook_label = QLabel("Notebook")
         notebook_label.setAlignment(Qt.AlignCenter)
         notebook_label.setStyleSheet("font-size: 16px; text-align: center;")
+
+        self.new_notebook_button = QPushButton("New Notebook")
+        self.new_notebook_button.setStyleSheet("padding: 8px; font-size: 14px;")
+        self.new_notebook_button.clicked.connect(lambda _: self.notebook_new_requested.emit())
+
+        self.mode_label = QLabel()
+        self.mode_label.setAlignment(Qt.AlignCenter)
+        self.mode_label.setStyleSheet("font-size: 12px; color: #777;")
 
         self.list_container = QWidget()
         self.list_layout = QVBoxLayout()
@@ -300,8 +330,20 @@ class SideBarNotebook(QWidget):
         sidebar_layout = QVBoxLayout()
         sidebar_layout.setAlignment(Qt.AlignTop)
         sidebar_layout.addWidget(notebook_label)
+        sidebar_layout.addWidget(self.new_notebook_button)
+        sidebar_layout.addWidget(self.mode_label)
         sidebar_layout.addWidget(self.scroll)
         self.setLayout(sidebar_layout)
+
+        self.set_new_notebook_mode(True)
+
+    def set_new_notebook_mode(self, is_new_mode: bool, notebook_name: str = ""):
+        if is_new_mode:
+            self.mode_label.setText("Mode: New Notebook (unsaved)")
+            return
+
+        display_name = notebook_name.strip() or "Saved Notebook"
+        self.mode_label.setText(f"Mode: {display_name}")
 
     def set_notebooks(self, notebooks: List[Dict]):
         while self.list_layout.count():
@@ -473,3 +515,9 @@ class InputArea(QWidget):
             self.tab_widget.setCurrentIndex(0)
         else:
             self.removeFileName()
+
+    def reset_inputs(self):
+        self.last_input_error = ""
+        self.input_message.setPlainText("")
+        self.removeFileName()
+        self.tab_widget.setCurrentIndex(0)
