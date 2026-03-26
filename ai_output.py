@@ -293,7 +293,11 @@ class QuizCanvas(QWidget):
             self._cards.append(card)
 
         self.finish_button = QPushButton("Finish")
-        self.finish_button.setStyleSheet("padding: 8px; font-size: 14px;")
+        self.finish_button.setStyleSheet(
+            "QPushButton { padding: 8px; font-size: 14px; background-color: #d32f2f; color: white; }"
+            "QPushButton:hover { background-color: #b71c1c; color: white; }"
+            "QPushButton:pressed { background-color: #8e0000; color: white; }"
+        )
         self.finish_button.clicked.connect(self.finish_quiz)
 
         self.delete_set_button = QPushButton("Delete Set")

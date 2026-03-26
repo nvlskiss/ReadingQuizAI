@@ -1,5 +1,7 @@
 import sys
 
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QMessageBox, QVBoxLayout, QWidget
 
 from ai_output import OutputArea
@@ -8,13 +10,113 @@ from question_generator import QuestionGenerator
 from question_setting import QuestionSetting, SideBarNotebook
 
 
+class SplashScreen(QWidget):
+    finished = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.progress = 0
+        self.setFixedSize(420, 320)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._update_progress)
+        self._timer.start(20)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen:
+            geometry = screen.availableGeometry()
+            self.move(
+                geometry.center().x() - (self.width() // 2),
+                geometry.center().y() - (self.height() // 2),
+            )
+
+    def _update_progress(self):
+        self.progress = min(100, self.progress + 1)
+        self.update()
+        if self.progress >= 100:
+            self._timer.stop()
+            QTimer.singleShot(120, self._finish)
+
+    def _finish(self):
+        self.finished.emit()
+        self.close()
+
+    def paintEvent(self, event):
+        _ = event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        circle_size = 220
+        x = (self.width() - circle_size) // 2
+        y = (self.height() - circle_size) // 2
+
+        shadow_offset = 6
+        shadow_size = circle_size + 8
+        shadow_x = x - 4 + shadow_offset
+        shadow_y = y - 4 + shadow_offset
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 90))
+        painter.drawEllipse(shadow_x, shadow_y, shadow_size, shadow_size)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#1f2233"))
+        inner_gap = 18
+        fill_x = x + inner_gap
+        fill_y = y + inner_gap
+        fill_size = circle_size - (inner_gap * 2)
+        painter.drawEllipse(fill_x, fill_y, fill_size, fill_size)
+
+        base_pen = QPen(QColor("#2c3146"), 12)
+        base_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(base_pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(x, y, circle_size, circle_size)
+
+        progress_pen = QPen(QColor("#ff5cb8"), 12)
+        progress_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(progress_pen)
+        start_angle = 90 * 16
+        span_angle = int(-360 * 16 * (self.progress / 100.0))
+        painter.drawArc(x, y, circle_size, circle_size, start_angle, span_angle)
+
+        painter.setPen(QColor("#d7d9e0"))
+        painter.setFont(QFont("Segoe UI", 9))
+        painter.drawText(x, y + 72, circle_size, 20, Qt.AlignCenter, "ReadingQuizAI")
+
+        painter.setPen(QColor("#ff7ac4"))
+        painter.setFont(QFont("Segoe UI", 32, QFont.Bold))
+        painter.drawText(x, y + 92, circle_size, 52, Qt.AlignCenter, f"{self.progress}%")
+
+        painter.setPen(QColor("#b7bbca"))
+        painter.setFont(QFont("Segoe UI", 10))
+        painter.drawText(x, y + 170, circle_size, 20, Qt.AlignCenter, "loading...")
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     notebook = QWidget()
+    notebook.setObjectName("mainWindow")
+    notebook_container_style = "rgba(255, 255, 255, 51)"
+    notebook.setStyleSheet(
+        "#mainWindow { "
+        "background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, "
+        "stop:0 #EDF0D8, stop:1 #CFE3FF); "
+        "}"
+        f"#notebookContainer {{ background-color: {notebook_container_style}; }}"
+        f"#settingContainer {{ background-color: {notebook_container_style}; }}"
+        f"#quizContainer {{ background-color: {notebook_container_style}; }}"
+    )
     question_setting = QuestionSetting()
+    question_setting.setObjectName("settingContainer")
     output_area = OutputArea()
+    output_area.setObjectName("quizContainer")
     sidebar_notebook = SideBarNotebook()
+    sidebar_notebook.setObjectName("notebookContainer")
 
     database = NotebookDatabase()
     generator_holder = {"instance": None}
@@ -285,5 +387,11 @@ if __name__ == "__main__":
     refresh_sidebar()
 
     window = notebook
-    window.show()
+    splash = SplashScreen()
+
+    def show_main_window():
+        window.show()
+
+    splash.finished.connect(show_main_window)
+    splash.show()
     app.exec()
