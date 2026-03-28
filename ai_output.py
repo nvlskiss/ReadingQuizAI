@@ -121,10 +121,24 @@ class QuestionCard(QFrame):
         return f"Type: {labels.get(question_type, 'Essay')}"
 
     def set_take_quiz_mode(self):
+        self._reset_answer_inputs()
         self._answer_label.setVisible(False)
         self._score_label.setVisible(False)
         for widget in self._answer_widgets:
             widget.setEnabled(True)
+
+    def _reset_answer_inputs(self):
+        if self._button_group is not None:
+            self._button_group.setExclusive(False)
+            for button in self._button_group.buttons():
+                button.setChecked(False)
+            self._button_group.setExclusive(True)
+
+        for widget in self._answer_widgets:
+            if isinstance(widget, QLineEdit):
+                widget.clear()
+            elif isinstance(widget, QPlainTextEdit):
+                widget.clear()
 
     def set_locked_mode(self):
         self._answer_label.setVisible(False)
@@ -225,6 +239,8 @@ class QuestionCard(QFrame):
 
 class QuizCanvas(QWidget):
     delete_requested = Signal()
+    quiz_started = Signal()
+    quiz_revealed = Signal()
 
     def __init__(self, generated_output: str, questions: List[Dict]):
         super().__init__()
@@ -260,8 +276,8 @@ class QuizCanvas(QWidget):
         layout.addWidget(self.scroll_area)
         self.setLayout(layout)
 
-        self.take_quiz_button.clicked.connect(self.set_take_quiz_mode)
-        self.show_answers_button.clicked.connect(self.set_show_answers_mode)
+        self.take_quiz_button.clicked.connect(self._on_take_quiz_clicked)
+        self.show_answers_button.clicked.connect(self._on_show_answers_clicked)
 
         self.refresh(generated_output, questions)
 
@@ -298,7 +314,7 @@ class QuizCanvas(QWidget):
             "QPushButton:hover { background-color: #b71c1c; color: white; }"
             "QPushButton:pressed { background-color: #8e0000; color: white; }"
         )
-        self.finish_button.clicked.connect(self.finish_quiz)
+        self.finish_button.clicked.connect(self._on_finish_clicked)
 
         self.delete_set_button = QPushButton("Delete Set")
         self.delete_set_button.setStyleSheet("padding: 8px; font-size: 14px;")
@@ -332,6 +348,14 @@ class QuizCanvas(QWidget):
         for card in self._cards:
             card.set_show_answers_mode()
 
+    def _on_take_quiz_clicked(self):
+        self.set_take_quiz_mode()
+        self.quiz_started.emit()
+
+    def _on_show_answers_clicked(self):
+        self.set_show_answers_mode()
+        self.quiz_revealed.emit()
+
     def finish_quiz(self):
         earned_total = 0
         max_total = 0
@@ -351,6 +375,10 @@ class QuizCanvas(QWidget):
 
         self.score_label.setText(f"Score: {earned_total}/{max_total}")
 
+    def _on_finish_clicked(self):
+        self.finish_quiz()
+        self.quiz_revealed.emit()
+
     def _request_delete(self):
         self.delete_requested.emit()
 
@@ -358,6 +386,8 @@ class QuizCanvas(QWidget):
 class OutputArea(QWidget):
     set_changed = Signal(dict)
     set_delete_requested = Signal(dict)
+    quiz_started = Signal()
+    quiz_revealed = Signal()
 
     def __init__(self):
         super().__init__()
@@ -377,6 +407,8 @@ class OutputArea(QWidget):
     def _create_set_view(self, generated_output: str, questions: List[Dict]):
         view = QuizCanvas(generated_output, questions)
         view.delete_requested.connect(lambda: self._on_view_delete_requested(view))
+        view.quiz_started.connect(self.quiz_started.emit)
+        view.quiz_revealed.connect(self.quiz_revealed.emit)
         view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         view.setMinimumSize(600, 600)
         return view
@@ -447,6 +479,17 @@ class OutputArea(QWidget):
         if 0 <= index < len(self._set_payloads):
             return self._set_payloads[index]
         return None
+
+    def get_set_count(self, include_empty: bool = True) -> int:
+        if include_empty:
+            return len(self._set_payloads)
+
+        count = 0
+        for payload in self._set_payloads:
+            generated_output = str(payload.get("generated_output", "")).strip()
+            if generated_output:
+                count += 1
+        return count
 
     def _on_tab_changed(self, index: int):
         if self._loading_sets:

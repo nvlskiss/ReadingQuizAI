@@ -1,0 +1,15 @@
+{
+    "epoch": 0.0002339728591483388,
+    "test_bertscore_f1": 0.8421,
+    "test_bertscore_precision": 0.8302,
+    "test_bertscore_recall": 0.8549,
+    "test_bleu": 0.1649,
+    "test_loss": 2.8934013843536377,
+    "test_rouge1": 0.4817,
+    "test_rouge2": 0.2927,
+    "test_rougeL": 0.4684,
+    "test_rougeLsum": 0.4689,
+    "test_runtime": 112.6994,
+    "test_samples_per_second": 1.136,
+    "test_steps_per_second": 0.568
+}

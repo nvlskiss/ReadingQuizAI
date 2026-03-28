@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 class QuestionSetting(QWidget):
     generate_requested = Signal(dict)
     save_notebook_requested = Signal(dict)
+    view_generated_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -93,14 +94,31 @@ class QuestionSetting(QWidget):
         language_vlayout.addWidget(self.filipino)
         language_group.setLayout(language_vlayout)
 
+        status_group = QGroupBox()
+        status_group.setStyleSheet("border:0;")
+        status_label = QLabel("Notebook Status")
+        status_label.setStyleSheet("font-size:16px;")
+        self.status_notebook_label = QLabel("Notebook: New Notebook")
+        self.status_notebook_label.setStyleSheet("font-size:14px;")
+        self.status_set_count_label = QLabel("Sets: 1 set")
+        self.status_set_count_label.setStyleSheet("font-size:14px; font-weight:600;")
+
+        status_vlayout = QVBoxLayout()
+        status_vlayout.addWidget(status_label)
+        status_vlayout.addWidget(self.status_notebook_label)
+        status_vlayout.addWidget(self.status_set_count_label)
+        status_group.setLayout(status_vlayout)
+
         question_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         language_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        status_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         content_layout = QVBoxLayout()
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(question_group)
         filter_layout.addLayout(qty_layout)
         filter_layout.addWidget(language_group)
+        filter_layout.addWidget(status_group)
 
         content_layout.addWidget(self.input_area)
         content_layout.addLayout(filter_layout)
@@ -108,7 +126,13 @@ class QuestionSetting(QWidget):
         self.setLayout(content_layout)
 
         self.question_button.generate_question_button.clicked.connect(self._on_generate_clicked)
-        self.question_button.save_as_button.clicked.connect(self._on_save_clicked)
+        self.question_button.view_generated_button.clicked.connect(self.view_generated_requested.emit)
+
+    def request_save(self):
+        self._on_save_clicked()
+
+    def set_context_hidden(self, hidden: bool):
+        self.input_area.set_context_hidden(hidden)
 
     def collect_payload(self) -> Dict:
         return {
@@ -165,6 +189,13 @@ class QuestionSetting(QWidget):
         self.english.setAutoExclusive(True)
         self.filipino.setAutoExclusive(True)
         self.language_chosen = ""
+
+    def update_notebook_status(self, notebook_name: str, set_count: int):
+        display_name = notebook_name.strip() if notebook_name else "New Notebook"
+        normalized_count = max(0, int(set_count))
+        set_word = "set" if normalized_count == 1 else "sets"
+        self.status_notebook_label.setText(f"Notebook: {display_name}")
+        self.status_set_count_label.setText(f"Sets: {normalized_count} {set_word}")
 
     def ask_notebook_name(self) -> str:
         notebook_name, ok = QInputDialog.getText(self, "Save Notebook", "Notebook name:")
@@ -283,15 +314,14 @@ class QuestionButton(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.save_as_button = QPushButton("Save as Notebook")
-        self.save_as_button.setStyleSheet("padding: 8px; font-size: 14px;")
-
         self.generate_question_button = QPushButton("Generate Question")
         self.generate_question_button.setStyleSheet("padding: 8px; font-size: 14px;")
+        self.view_generated_button = QPushButton("View Generated Question/s")
+        self.view_generated_button.setStyleSheet("padding: 8px; font-size: 14px;")
 
         button_layout = QHBoxLayout()
-        button_layout.addWidget(self.save_as_button)
         button_layout.addWidget(self.generate_question_button)
+        button_layout.addWidget(self.view_generated_button)
         self.setLayout(button_layout)
 
 
@@ -300,6 +330,7 @@ class SideBarNotebook(QWidget):
     notebook_delete_requested = Signal(int)
     notebook_rename_requested = Signal(int)
     notebook_new_requested = Signal()
+    notebook_save_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -313,6 +344,14 @@ class SideBarNotebook(QWidget):
         self.new_notebook_button = QPushButton("New Notebook")
         self.new_notebook_button.setStyleSheet("padding: 8px; font-size: 14px;")
         self.new_notebook_button.clicked.connect(lambda _: self.notebook_new_requested.emit())
+
+        self.save_notebook_button = QPushButton("Save Notebook")
+        self.save_notebook_button.setStyleSheet("padding: 8px; font-size: 14px;")
+        self.save_notebook_button.clicked.connect(lambda _: self.notebook_save_requested.emit())
+
+        notebook_actions = QHBoxLayout()
+        notebook_actions.addWidget(self.new_notebook_button)
+        notebook_actions.addWidget(self.save_notebook_button)
 
         self.mode_label = QLabel()
         self.mode_label.setAlignment(Qt.AlignCenter)
@@ -330,7 +369,7 @@ class SideBarNotebook(QWidget):
         sidebar_layout = QVBoxLayout()
         sidebar_layout.setAlignment(Qt.AlignTop)
         sidebar_layout.addWidget(notebook_label)
-        sidebar_layout.addWidget(self.new_notebook_button)
+        sidebar_layout.addLayout(notebook_actions)
         sidebar_layout.addWidget(self.mode_label)
         sidebar_layout.addWidget(self.scroll)
         self.setLayout(sidebar_layout)
@@ -397,6 +436,8 @@ class InputArea(QWidget):
         super().__init__()
 
         self.last_input_error = ""
+        self._context_hidden = False
+        self._context_cache = {}
 
         self.tab_widget = QTabWidget(self)
 
@@ -521,3 +562,44 @@ class InputArea(QWidget):
         self.input_message.setPlainText("")
         self.removeFileName()
         self.tab_widget.setCurrentIndex(0)
+
+    def set_context_hidden(self, hidden: bool):
+        if hidden and not self._context_hidden:
+            self._context_cache = {
+                "textbox_text": self.textbox.text(),
+                "input_message_text": self.input_message.toPlainText(),
+                "input_file_text": self.input_file.text(),
+                "remove_file_text": self.remove_file.text(),
+                "tab_index": self.tab_widget.currentIndex(),
+                "tab_file_enabled": self.tab_widget.isTabEnabled(0),
+                "tab_text_enabled": self.tab_widget.isTabEnabled(1),
+                "input_file_enabled": self.input_file.isEnabled(),
+                "remove_file_enabled": self.remove_file.isEnabled(),
+                "input_message_read_only": self.input_message.isReadOnly(),
+            }
+
+            masked_text = "Content hidden while quiz is in progress."
+            self.textbox.setText(masked_text)
+            self.input_message.setPlainText(masked_text)
+            self.input_message.setReadOnly(True)
+
+            self.input_file.setEnabled(False)
+            self.remove_file.setEnabled(False)
+            self.tab_widget.setTabEnabled(0, False)
+            self.tab_widget.setTabEnabled(1, False)
+            self._context_hidden = True
+            return
+
+        if not hidden and self._context_hidden:
+            self.textbox.setText(self._context_cache.get("textbox_text", ""))
+            self.input_message.setPlainText(self._context_cache.get("input_message_text", ""))
+            self.input_file.setText(self._context_cache.get("input_file_text", "Choose File"))
+            self.remove_file.setText(self._context_cache.get("remove_file_text", "Remove File"))
+            self.input_file.setEnabled(bool(self._context_cache.get("input_file_enabled", True)))
+            self.remove_file.setEnabled(bool(self._context_cache.get("remove_file_enabled", True)))
+            self.input_message.setReadOnly(bool(self._context_cache.get("input_message_read_only", False)))
+            self.tab_widget.setTabEnabled(0, bool(self._context_cache.get("tab_file_enabled", True)))
+            self.tab_widget.setTabEnabled(1, bool(self._context_cache.get("tab_text_enabled", True)))
+            self.tab_widget.setCurrentIndex(int(self._context_cache.get("tab_index", 0)))
+            self._context_cache = {}
+            self._context_hidden = False

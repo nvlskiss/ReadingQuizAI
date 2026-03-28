@@ -1,7 +1,8 @@
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QIcon, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QMessageBox, QVBoxLayout, QWidget
 
 from ai_output import OutputArea
@@ -63,11 +64,14 @@ class SplashScreen(QWidget):
         painter.drawEllipse(shadow_x, shadow_y, shadow_size, shadow_size)
 
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor("#1f2233"))
         inner_gap = 18
         fill_x = x + inner_gap
         fill_y = y + inner_gap
         fill_size = circle_size - (inner_gap * 2)
+        fill_gradient = QLinearGradient(fill_x, fill_y, fill_x + fill_size, fill_y + fill_size)
+        fill_gradient.setColorAt(0.0, QColor("#EDF0D8"))
+        fill_gradient.setColorAt(1.0, QColor("#CFE3FF"))
+        painter.setBrush(fill_gradient)
         painter.drawEllipse(fill_x, fill_y, fill_size, fill_size)
 
         base_pen = QPen(QColor("#2c3146"), 12)
@@ -83,7 +87,7 @@ class SplashScreen(QWidget):
         span_angle = int(-360 * 16 * (self.progress / 100.0))
         painter.drawArc(x, y, circle_size, circle_size, start_angle, span_angle)
 
-        painter.setPen(QColor("#d7d9e0"))
+        painter.setPen(QColor("#111111"))
         painter.setFont(QFont("Segoe UI", 9))
         painter.drawText(x, y + 72, circle_size, 20, Qt.AlignCenter, "ReadingQuizAI")
 
@@ -99,7 +103,16 @@ class SplashScreen(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
+    window_icon = None
+    logo_path = Path(__file__).resolve().parent / "img" / "READY.png"
+    if logo_path.exists():
+        window_icon = QIcon(str(logo_path))
+        app.setWindowIcon(window_icon)
+
     notebook = QWidget()
+    notebook.setWindowTitle("READY")
+    if window_icon is not None:
+        notebook.setWindowIcon(window_icon)
     notebook.setObjectName("mainWindow")
     notebook_container_style = "rgba(255, 255, 255, 51)"
     notebook.setStyleSheet(
@@ -115,16 +128,36 @@ if __name__ == "__main__":
     question_setting.setObjectName("settingContainer")
     output_area = OutputArea()
     output_area.setObjectName("quizContainer")
+    output_area.setStyleSheet(
+        "#quizContainer { "
+        "background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, "
+        "stop:0 #EDF0D8, stop:1 #CFE3FF); "
+        "}"
+    )
+    output_area.setWindowTitle("READY - Generated Questions")
+    output_area.resize(900, 700)
+    if window_icon is not None:
+        output_area.setWindowIcon(window_icon)
     sidebar_notebook = SideBarNotebook()
     sidebar_notebook.setObjectName("notebookContainer")
 
     database = NotebookDatabase()
     generator_holder = {"instance": None}
     selected_notebook_id = {"value": None}
+    selected_notebook_name = {"value": "New Notebook"}
 
     def refresh_sidebar():
         notebooks = database.list_notebooks()
         sidebar_notebook.set_notebooks(notebooks)
+
+    def refresh_notebook_status(set_count=None):
+        if set_count is not None:
+            current_count = int(set_count)
+        elif selected_notebook_id["value"] is None:
+            current_count = output_area.get_set_count(include_empty=False)
+        else:
+            current_count = output_area.get_set_count(include_empty=True)
+        question_setting.update_notebook_status(selected_notebook_name["value"], current_count)
 
     def handle_generate(payload):
         input_text = payload.get("input_content", "").strip()
@@ -164,6 +197,7 @@ if __name__ == "__main__":
                 use_story_compression=True,
             )
             output_area.set_output_text(generated_output)
+            refresh_notebook_status()
         except Exception as error:
             QMessageBox.critical(
                 notebook,
@@ -206,9 +240,11 @@ if __name__ == "__main__":
             data = database.get_notebook_sets(notebook_id)
             if data:
                 selected_notebook_id["value"] = notebook_id
+                selected_notebook_name["value"] = notebook_name
                 output_area.load_sets(data.get("sets", []))
                 output_area.set_active_set(set_name)
                 sidebar_notebook.set_new_notebook_mode(False, notebook_name)
+                refresh_notebook_status(len(data.get("sets", [])))
 
             QMessageBox.information(notebook, "Saved", f"{set_name} saved to notebook '{notebook_name}'.")
         except Exception as error:
@@ -232,22 +268,41 @@ if __name__ == "__main__":
             )
             return
 
+        question_setting.set_context_hidden(False)
         selected_notebook_id["value"] = notebook_id
+        selected_notebook_name["value"] = data.get("notebook_name", "Saved Notebook")
         output_area.load_sets(data["sets"])
         question_setting.set_from_saved_settings(data["sets"][0]["settings"])
         sidebar_notebook.set_new_notebook_mode(False, data.get("notebook_name", ""))
+        refresh_notebook_status(len(data.get("sets", [])))
 
     def handle_new_notebook_requested():
+        question_setting.set_context_hidden(False)
         selected_notebook_id["value"] = None
+        selected_notebook_name["value"] = "New Notebook"
         output_area.clear_sets()
         output_area.add_set("Set 1", "")
         question_setting.reset_to_defaults()
         sidebar_notebook.set_new_notebook_mode(True)
+        refresh_notebook_status()
         QMessageBox.information(
             notebook,
             "New Notebook",
             "Workspace reset for a new notebook. Saved notebooks were not changed.",
         )
+
+    def handle_view_generated_requested():
+        if not output_area.get_output_text().strip():
+            QMessageBox.information(
+                notebook,
+                "No Generated Questions",
+                "Generate questions first before opening Generated Questions.",
+            )
+            return
+
+        output_area.show()
+        output_area.raise_()
+        output_area.activateWindow()
 
     def handle_output_set_changed(set_payload):
         settings = set_payload.get("settings", {})
@@ -296,17 +351,21 @@ if __name__ == "__main__":
                 selected_notebook_id["value"] = notebook_id
                 data = database.get_notebook_sets(notebook_id)
                 if data and data.get("sets"):
+                    selected_notebook_name["value"] = data.get("notebook_name", selected_notebook_name["value"])
                     output_area.load_sets(data["sets"])
                     question_setting.set_from_saved_settings(data["sets"][0].get("settings", {}))
+                    refresh_notebook_status(len(data.get("sets", [])))
                 else:
                     output_area.clear_sets()
                     output_area.add_set("Set 1", "")
+                    refresh_notebook_status()
 
             refresh_sidebar()
             QMessageBox.information(notebook, "Deleted", "Set deleted successfully.")
             return
 
         output_area.remove_set_at(tab_index)
+        refresh_notebook_status(output_area.tab_widget.count())
         QMessageBox.information(notebook, "Deleted", "Set deleted successfully.")
 
     def handle_notebook_delete(notebook_id):
@@ -333,11 +392,14 @@ if __name__ == "__main__":
 
         refresh_sidebar()
         if selected_notebook_id["value"] == notebook_id:
+            question_setting.set_context_hidden(False)
             selected_notebook_id["value"] = None
+            selected_notebook_name["value"] = "New Notebook"
             output_area.clear_sets()
             output_area.add_set("Set 1", "")
             question_setting.reset_to_defaults()
             sidebar_notebook.set_new_notebook_mode(True)
+            refresh_notebook_status()
         QMessageBox.information(notebook, "Deleted", "Notebook deleted successfully.")
 
     def handle_notebook_rename(notebook_id):
@@ -357,22 +419,26 @@ if __name__ == "__main__":
             return
 
         refresh_sidebar()
+        if selected_notebook_id["value"] == notebook_id:
+            selected_notebook_name["value"] = notebook_name
+            refresh_notebook_status()
         QMessageBox.information(notebook, "Renamed", "Notebook renamed successfully.")
 
     question_setting.generate_requested.connect(handle_generate)
     question_setting.save_notebook_requested.connect(handle_save)
+    question_setting.view_generated_requested.connect(handle_view_generated_requested)
     output_area.set_changed.connect(handle_output_set_changed)
     output_area.set_delete_requested.connect(handle_output_set_delete)
+    output_area.quiz_started.connect(lambda: question_setting.set_context_hidden(True))
+    output_area.quiz_revealed.connect(lambda: question_setting.set_context_hidden(False))
     sidebar_notebook.notebook_selected.connect(handle_notebook_selected)
     sidebar_notebook.notebook_new_requested.connect(handle_new_notebook_requested)
+    sidebar_notebook.notebook_save_requested.connect(question_setting.request_save)
     sidebar_notebook.notebook_delete_requested.connect(handle_notebook_delete)
     sidebar_notebook.notebook_rename_requested.connect(handle_notebook_rename)
 
     question_input_layout = QVBoxLayout()
     question_input_layout.addWidget(question_setting)
-
-    ai_output_layout = QVBoxLayout()
-    ai_output_layout.addWidget(output_area)
 
     sidebar_notebook_layout = QVBoxLayout()
     sidebar_notebook_layout.addWidget(sidebar_notebook)
@@ -380,11 +446,11 @@ if __name__ == "__main__":
     notebook_layout = QHBoxLayout()
     notebook_layout.addLayout(sidebar_notebook_layout)
     notebook_layout.addLayout(question_input_layout)
-    notebook_layout.addLayout(ai_output_layout)
 
     notebook.setLayout(notebook_layout)
 
     refresh_sidebar()
+    refresh_notebook_status()
 
     window = notebook
     splash = SplashScreen()

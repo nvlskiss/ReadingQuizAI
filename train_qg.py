@@ -2,6 +2,8 @@ import argparse
 import os
 from typing import Dict, List
 
+import evaluate
+import numpy as np
 from datasets import DatasetDict, Features, Value, load_dataset
 from huggingface_hub import hf_hub_download
 from transformers import (
@@ -98,6 +100,62 @@ def _tokenize_dataset(dataset: DatasetDict, tokenizer: T5Tokenizer, max_input_le
     return dataset.map(_tokenize, batched=True, remove_columns=dataset["train"].column_names)
 
 
+def _build_compute_metrics(tokenizer: T5Tokenizer):
+    bleu = evaluate.load("bleu")
+    rouge = evaluate.load("rouge")
+    bertscore = evaluate.load("bertscore")
+
+    def compute_metrics(eval_preds):
+        predictions, labels = eval_preds
+
+        if isinstance(predictions, tuple):
+            predictions = predictions[0]
+
+        if hasattr(predictions, "ndim") and predictions.ndim == 3:
+            predictions = np.argmax(predictions, axis=-1)
+
+        predictions = np.where(predictions < 0, tokenizer.pad_token_id, predictions)
+        labels = np.where(labels < 0, tokenizer.pad_token_id, labels)
+
+        decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+
+        decoded_preds = [pred.strip() for pred in decoded_preds]
+        decoded_labels = [label.strip() for label in decoded_labels]
+
+        bleu_result = bleu.compute(
+            predictions=decoded_preds,
+            references=[[label] for label in decoded_labels],
+        )
+        rouge_result = rouge.compute(predictions=decoded_preds, references=decoded_labels)
+        bert_result = bertscore.compute(
+            predictions=decoded_preds,
+            references=decoded_labels,
+            model_type="distilbert-base-uncased",
+            lang="en",
+        )
+
+        metrics = {
+            "bleu": round(float(bleu_result["bleu"]), 4),
+            "rouge1": round(float(rouge_result["rouge1"]), 4),
+            "rouge2": round(float(rouge_result["rouge2"]), 4),
+            "rougeL": round(float(rouge_result["rougeL"]), 4),
+            "rougeLsum": round(float(rouge_result["rougeLsum"]), 4),
+            "bertscore_precision": round(float(np.mean(bert_result["precision"])), 4),
+            "bertscore_recall": round(float(np.mean(bert_result["recall"])), 4),
+            "bertscore_f1": round(float(np.mean(bert_result["f1"])), 4),
+        }
+        return metrics
+
+    return compute_metrics
+
+
+def _take_first_n(dataset_split, max_samples: int):
+    if max_samples <= 0:
+        return dataset_split
+    return dataset_split.select(range(min(max_samples, len(dataset_split))))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune T5 question generation model on FairytaleQA")
     parser.add_argument("--repo-id", default="WorkInTheDark/FairytaleQA")
@@ -109,6 +167,8 @@ def main():
     parser.add_argument("--max-input-length", type=int, default=256)
     parser.add_argument("--max-target-length", type=int, default=64)
     parser.add_argument("--max-steps", type=int, default=-1, help="Set >0 for a quick run")
+    parser.add_argument("--max-validation-samples", type=int, default=0, help="Use first N validation samples (0 = all)")
+    parser.add_argument("--max-test-samples", type=int, default=0, help="Use first N test samples (0 = all)")
     parser.add_argument("--eval-steps", type=int, default=200)
     parser.add_argument("--save-steps", type=int, default=200)
     parser.add_argument("--logging-steps", type=int, default=50)
@@ -126,6 +186,15 @@ def main():
     model = T5ForConditionalGeneration.from_pretrained(args.base_model)
 
     tokenized = _tokenize_dataset(dataset, tokenizer, args.max_input_length, args.max_target_length)
+    compute_metrics = _build_compute_metrics(tokenizer)
+
+    validation_dataset = _take_first_n(tokenized["validation"], args.max_validation_samples)
+    test_dataset = _take_first_n(tokenized["test"], args.max_test_samples)
+
+    if args.max_validation_samples > 0:
+        print(f"Using validation subset: {len(validation_dataset)} samples")
+    if args.max_test_samples > 0:
+        print(f"Using test subset: {len(test_dataset)} samples")
 
     eval_strategy = "no" if args.disable_eval else "steps"
 
@@ -136,7 +205,8 @@ def main():
         per_device_eval_batch_size=args.batch_size,
         num_train_epochs=args.epochs,
         weight_decay=0.01,
-        predict_with_generate=False,
+        predict_with_generate=True,
+        generation_max_length=args.max_target_length,
         eval_strategy=eval_strategy,
         save_strategy="steps",
         eval_steps=args.eval_steps,
@@ -157,7 +227,8 @@ def main():
         model=model,
         args=training_args,
         train_dataset=tokenized["train"],
-        eval_dataset=tokenized["validation"],
+        eval_dataset=validation_dataset,
+        compute_metrics=compute_metrics if not args.disable_eval else None,
         processing_class=tokenizer,
         data_collator=data_collator,
     )
@@ -181,7 +252,7 @@ def main():
 
     if not args.disable_eval:
         print("Running test split evaluation...")
-        test_metrics = trainer.evaluate(tokenized["test"], metric_key_prefix="test")
+        test_metrics = trainer.evaluate(test_dataset, metric_key_prefix="test")
         trainer.log_metrics("test", test_metrics)
         trainer.save_metrics("test", test_metrics)
 
